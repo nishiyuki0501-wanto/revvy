@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Testing
 @testable import IssueShot
@@ -48,6 +49,34 @@ struct ScreenRulerTests {
         #expect(small == CGRect(x: 100, y: 120, width: 8, height: 4))
         let minimum = ScreenRulerGeometry.resized(small, edges: [.right, .bottom], by: CGSize(width: -100, height: 100))
         #expect(minimum == CGRect(x: 100, y: 123, width: 1, height: 1))
+    }
+
+    @Test func tinyRulerShowsItsSizeOutside() {
+        let label = CGSize(width: 90, height: 14)
+        #expect(!ScreenRulerGeometry.labelFitsInside(rulerSize: CGSize(width: 1, height: 1), labelSize: label))
+        #expect(ScreenRulerGeometry.labelFitsInside(rulerSize: CGSize(width: 320, height: 200), labelSize: label))
+        let visible = CGRect(x: 0, y: 0, width: 1440, height: 875)
+        let below = ScreenRulerGeometry.externalLabelOrigin(ruler: CGRect(x: 500, y: 400, width: 1, height: 1), labelSize: label, visible: visible)
+        #expect(below == CGPoint(x: 456, y: 380))
+        // 画面の下端では上に回す
+        let above = ScreenRulerGeometry.externalLabelOrigin(ruler: CGRect(x: 2, y: 3, width: 1, height: 1), labelSize: label, visible: visible)
+        #expect(above == CGPoint(x: 0, y: 10))
+    }
+
+    @MainActor @Test func onePixelRulerPanelShowsItsSizeTagBelow() throws {
+        let rulers = ScreenRulers()
+        let visible = try #require(NSScreen.main?.visibleFrame)
+        let frame = CGRect(x: visible.midX.rounded(), y: visible.midY.rounded(), width: 1, height: 1)
+        rulers.add(frame: frame)
+        defer { rulers.closeAll() }
+        let panel = try #require(NSApp.windows.compactMap { $0 as? RulerPanel }.first { $0.frame == frame })
+        #expect(panel.frame.size == CGSize(width: 1, height: 1))
+        let tag = try #require(panel.childWindows?.first)
+        #expect(tag.isVisible)
+        #expect(tag.frame.maxY < panel.frame.minY)
+        // 大きくすると、ラベルは中に描くので外のラベルは消える
+        panel.setFrame(CGRect(x: frame.minX, y: frame.minY, width: 320, height: 200), display: true)
+        #expect(!tag.isVisible)
     }
 
     @Test func keepsNewRulerOnScreen() {

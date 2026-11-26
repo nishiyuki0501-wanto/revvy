@@ -12,7 +12,7 @@ Revvy is distributed as a signed and notarized DMG. The repository also contains
 | App Sandbox | Enabled, with only `network.client` and `files.user-selected.read-write` (`Config/Revvy-AppStore.entitlements`) |
 | Signing | Automatic (`Config/AppStore.xcconfig`); pass `TEAM_ID` on the command line |
 | Compilation condition | `APP_STORE` — removes the developer option that runs the `gh` CLI |
-| Privacy manifest | `IssueShot/Resources/PrivacyInfo.xcprivacy` (no tracking, no collected data, `UserDefaults` reason `CA92.1`) |
+| Privacy manifest | `IssueShot/Resources/PrivacyInfo.xcprivacy` (no tracking; declares Other User Content and Device ID for link sharing, for app functionality; `UserDefaults` reason `CA92.1`) |
 | Export compliance | `ITSAppUsesNonExemptEncryption = NO` (only system HTTPS) |
 
 In the sandboxed build, history and settings live in the app container (`~/Library/Containers/<bundle id>/`), so they are not shared with a direct-download build. Screen Recording permission and the GitHub sign-in must be granted again.
@@ -29,12 +29,13 @@ make appstore-upload TEAM_ID=YOUR_TEAM_ID  # archive, export and upload to App S
 
 ## Checklist before submitting
 
-- [ ] Change the bundle ID and GitHub OAuth App Client ID to your own
+- [ ] Change the bundle ID and GitHub OAuth App Client ID to your own, and deploy your own share server (`cloud/README.md`) and set its URL in `ShareConfig.bundledBaseURL`
 - [ ] Verify under the sandbox: region/full-screen capture and permission denial, global shortcuts, on-screen ruler, drag and drop (Finder, browsers, Photos), image import and PNG export, GitHub sign-in, issue creation and link sharing
 - [ ] Publish a privacy policy URL (you can adapt [PRIVACY.md](../PRIVACY.md)) and a support URL
 - [ ] Prepare screenshots (16:10, at least 1280×800) without personal information
 - [ ] Provide App Review with a test GitHub account and repository for the GitHub features
-- [ ] Declare App Privacy as appropriate (the app itself sends nothing to the developer)
+- [ ] Declare App Privacy to match the privacy manifest: link sharing sends the annotated image and a random per-device key (stored as a hash) to the share server you operate
+- [ ] Link sharing publishes user-uploaded images (App Review Guideline 1.2): the viewer page has a report form, and you need a way to act on reports (see "運用" in `cloud/README.md`) and published contact information
 - [ ] Increase `CURRENT_PROJECT_VERSION` in `project.yml` for every upload
 
 References:
@@ -50,7 +51,8 @@ Revvy は署名・公証済みの DMG で配布しています。このリポジ
 
 - `AppStore` 構成では App Sandbox を有効にし、許可はネットワーク（クライアント）とユーザーが選んだファイルの読み書きだけに絞っています。Bundle ID は `project.yml` で自分のものに変更してください。
 - `APP_STORE` フラグで、`gh` CLI を実行する開発者向けの機能を外します。
-- プライバシーマニフェスト（`PrivacyInfo.xcprivacy`）と輸出コンプライアンスの設定（`ITSAppUsesNonExemptEncryption = NO`）を含みます。
+- プライバシーマニフェスト（`PrivacyInfo.xcprivacy`）と輸出コンプライアンスの設定（`ITSAppUsesNonExemptEncryption = NO`）を含みます。リンク共有のため、マニフェストでは「その他のユーザーコンテンツ」と「デバイス ID」（どちらも機能のため、トラッキングなし）を申告しています。
+- リンク共有はユーザーが上げた画像を公開するため、審査ガイドライン 1.2 の対象です。閲覧ページに通報フォームがあります。通報への対応手順（`cloud/README.md` の「運用」）と連絡先を用意してください。
 - サンドボックス版の履歴と設定はアプリのコンテナに保存され、直接配布版とは共有されません。
 
 ```bash

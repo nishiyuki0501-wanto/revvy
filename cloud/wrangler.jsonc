@@ -1,0 +1,42 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Revvy の「リンクを作成してコピー」を受ける Worker。画像は R2 に置き、閲覧ページもここで返す。
+  "name": "revvy-share",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-22",
+  // 共有サーバーは IP アドレスを記録しない（PRIVACY.md）。調べるときは `wrangler tail` で一時的に見る。
+  "observability": { "enabled": false },
+  // 1 日あたりの上限を数える（src/index.ts の UsageQuota）
+  "durable_objects": {
+    "bindings": [{ "name": "QUOTA", "class_name": "UsageQuota" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UsageQuota"] }],
+  "r2_buckets": [
+    { "binding": "SHOTS", "bucket_name": "revvy-shots" }
+  ],
+  // Rate Limiting はロケーションごとの目安（厳密な上限ではない）。period は 10 か 60 のみ。
+  "ratelimits": [
+    // 1 台（端末キー）あたりのアップロード
+    { "name": "UPLOAD_KEY_LIMIT", "namespace_id": "7301", "simple": { "limit": 10, "period": 60 } },
+    // キーは誰でも作れるので、IP でも絞る
+    { "name": "UPLOAD_IP_LIMIT", "namespace_id": "7302", "simple": { "limit": 30, "period": 60 } },
+    // 閲覧（当てずっぽうに ID を試す相手を止める）
+    { "name": "VIEW_IP_LIMIT", "namespace_id": "7303", "simple": { "limit": 300, "period": 60 } },
+    // 通報フォーム
+    { "name": "REPORT_IP_LIMIT", "namespace_id": "7304", "simple": { "limit": 5, "period": 60 } }
+  ],
+  "vars": {
+    // 1 枚あたりの上限（バイト）。アプリは幅 2000px までの JPEG を送るので通常 1MB 未満。
+    "MAX_UPLOAD_BYTES": "5000000",
+    // 1 日（UTC）あたりの上限。端末キーごと・IP ごと・サーバー全体。全体の上限は保存料の歯止め。
+    "QUOTA_KEY_UPLOADS": "100",
+    "QUOTA_KEY_BYTES": "200000000",
+    "QUOTA_IP_UPLOADS": "300",
+    "QUOTA_IP_BYTES": "500000000",
+    "QUOTA_GLOBAL_UPLOADS": "20000",
+    "QUOTA_GLOBAL_BYTES": "10000000000",
+    // 通報の書き込み（サーバー全体、1 日）
+    "QUOTA_REPORTS_PER_DAY": "2000"
+    // QUOTA_SECRET は wrangler secret で入れる（IP を数えるときの HMAC 鍵）
+  }
+}

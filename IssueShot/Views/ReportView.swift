@@ -29,11 +29,13 @@ struct ReportInspector: View {
                 }
             }
 
+            LinkShareSection()
+
             if model.user == nil {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("キャプチャを、チームへ。").font(.system(size: 13, weight: .semibold))
-                        Text("GitHub をつなぐと、リンク共有と Issue の作成ができます。")
+                        Text("GitHub をつなぐと、Issue を作成できます。")
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         Button { showConnect = true } label: {
@@ -48,32 +50,10 @@ struct ReportInspector: View {
                 Section("届け先") {
                     ShareDestinationPicker()
                     if let repo = model.selectedRepo {
-                        Label(repo.isPrivate ? "アクセス権のあるメンバーだけが閲覧できます" : "リンクを知っている誰でも閲覧できます",
+                        Label(repo.isPrivate ? "アクセス権のあるメンバーだけが閲覧できます" : "公開リポジトリなので、誰でも閲覧できます",
                               systemImage: repo.isPrivate ? "lock" : "globe")
                             .font(.system(size: 10.5)).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Button { Task { await model.shareScreenshot() } } label: {
-                        HStack(spacing: 6) {
-                            if model.isSharing { ProgressView().controlSize(.small) }
-                            Text(model.isSharing ? "リンクを作成中…" : "リンクを作成してコピー")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .disabled(model.screenshot == nil || model.selectedRepo == nil || model.isSharing || model.isSubmitting)
-                    if let url = model.shareURL {
-                        HStack {
-                            Link("共有画像を開く ↗", destination: url)
-                            Spacer()
-                            Button("再コピー") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(url.absoluteString, forType: .string)
-                            }
-                            .buttonStyle(.link)
-                        }
-                        .font(.system(size: 11))
-                    } else if let status = model.shareStatus {
-                        Text(status).font(.system(size: 10.5)).foregroundStyle(.secondary)
                     }
                 }
 
@@ -139,6 +119,107 @@ struct ReportInspector: View {
                 .padding(.bottom, 12)
         }
         .background(.bar)
+    }
+}
+
+/// GitHub なしで使えるリンク共有（Cloudflare の共有サーバー）。Gyazo のように、押すと URL がコピーされる。
+struct LinkShareSection: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        Section("リンクで共有") {
+            Picker("保存期間", selection: $model.shareRetention) {
+                ForEach(ShareRetention.allCases) { retention in
+                    Text(retention.title).tag(retention)
+                }
+            }
+            .pickerStyle(.segmented)
+            Label(model.shareRetention == .forever
+                  ? "リンクを知っている人なら誰でも見られます。削除するまで残ります。"
+                  : "リンクを知っている人なら誰でも見られます。30日後に自動で削除されます。",
+                  systemImage: "link")
+                .font(.system(size: 10.5)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button { Task { await model.shareScreenshot() } } label: {
+                HStack(spacing: 6) {
+                    if model.isSharing { ProgressView().controlSize(.small) }
+                    Text(model.isSharing ? "リンクを作成中…" : "リンクを作成してコピー")
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .disabled(model.screenshot == nil || model.isSharing)
+            if let url = model.shareURL {
+                HStack {
+                    Link("共有画像を開く ↗", destination: url)
+                    Spacer()
+                    Button("再コピー") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                    }
+                    .buttonStyle(.link)
+                }
+                .font(.system(size: 11))
+            } else if let status = model.shareStatus {
+                Text(status).font(.system(size: 10.5)).foregroundStyle(.secondary)
+            }
+            if !model.activeShares.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("このキャプチャのリンク").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.secondary)
+                    ForEach(model.activeShares) { share in
+                        CloudShareRow(share: share)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct CloudShareRow: View {
+    @Environment(AppModel.self) private var model
+    let share: CloudShare
+    @State private var confirmDelete = false
+
+    private var expiryText: String {
+        guard let expiresAt = share.expiresAt else { return String(localized: "無期限") }
+        return String(localized: "\(expiresAt.formatted(date: .abbreviated, time: .omitted)) まで")
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: share.expiresAt == nil ? "infinity" : "clock")
+                .font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 14)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(share.url.absoluteString).font(.system(size: 10.5, design: .monospaced))
+                    .lineLimit(1).truncationMode(.middle)
+                Text(expiryText).font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            if model.deletingShareIDs.contains(share.id) {
+                ProgressView().controlSize(.mini)
+            } else {
+                Menu {
+                    Button("リンクをコピー", systemImage: "doc.on.doc") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(share.url.absoluteString, forType: .string)
+                    }
+                    Link(destination: share.url) { Label("ブラウザで開く", systemImage: "arrow.up.right.square") }
+                    Divider()
+                    Button("リンクを削除…", systemImage: "trash", role: .destructive) { confirmDelete = true }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityLabel("リンクの操作")
+            }
+        }
+        .confirmationDialog("このリンクを削除しますか？", isPresented: $confirmDelete) {
+            Button("削除", role: .destructive) { Task { await model.deleteShare(share) } }
+        } message: {
+            Text("リンクを開いても、画像は表示されなくなります。この操作は取り消せません。")
+        }
     }
 }
 

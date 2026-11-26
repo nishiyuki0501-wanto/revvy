@@ -8,6 +8,8 @@ struct SavedCapture: Codable, Identifiable, Equatable, Sendable {
     var note: String
     var text: String
     var annotations: [Annotation]? = nil
+    /// このキャプチャから作った共有リンク。古い履歴には無いので省略可能にする。
+    var shares: [CloudShare]? = nil
 
     func matches(_ query: String) -> Bool {
         let words = query.split(whereSeparator: \.isWhitespace)

@@ -383,6 +383,15 @@ enum ImageCodec {
         return rep.representation(using: .jpeg, properties: [.compressionFactor: quality])
     }
 
+    /// 共有サーバーの 1 枚の上限に収まるまで、画質と幅を段階的に下げる（縦にとても長い画像など）。収まらなければ nil。
+    static func jpegData(_ image: CGImage, fitting maxBytes: Int) -> Data? {
+        let steps: [(width: Int, quality: CGFloat)] = [(2000, 0.8), (2000, 0.6), (1600, 0.6), (1200, 0.5), (900, 0.4), (600, 0.3)]
+        for step in steps {
+            if let data = jpegData(image, maxWidth: step.width, quality: step.quality), data.count <= maxBytes { return data }
+        }
+        return nil
+    }
+
     static func downscale(_ image: CGImage, maxWidth: Int) -> CGImage {
         guard image.width > maxWidth else { return image }
         let scale = CGFloat(maxWidth) / CGFloat(image.width)

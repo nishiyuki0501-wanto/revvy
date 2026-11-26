@@ -9,6 +9,9 @@ enum SettingsKeys {
     static let assetsBranch = "issue.assetsBranch"
     static let selectedRepo = "issue.selectedRepo"
 
+    static let shareRetention = "share.retention"
+    static let shareBaseURL = "share.baseURL"
+
     static let rulerUnit = "ruler.unit"
     static let rootFontSize = "ruler.rootFontSize"
 
@@ -45,6 +48,12 @@ final class AppModel {
     var shareURL: URL?
     var shareStatus: String?
     var isSharing = false
+    /// 削除中の共有リンク（CloudShare.id）
+    var deletingShareIDs: Set<String> = []
+    /// 次に作るリンクの保存期間。前回の選択を覚えておく。
+    var shareRetention: ShareRetention = ShareRetention(rawValue: UserDefaults.standard.string(forKey: SettingsKeys.shareRetention) ?? "") ?? .thirtyDays {
+        didSet { UserDefaults.standard.set(shareRetention.rawValue, forKey: SettingsKeys.shareRetention) }
+    }
     var libraryStatus: String?
     private let library = CaptureLibrary()
     private var didBootstrap = false
@@ -142,6 +151,15 @@ final class AppModel {
     var issueLabel: String { defaults.string(forKey: SettingsKeys.issueLabel).nonEmpty ?? SettingsKeys.defaultLabel }
     var assetsBranch: String { defaults.string(forKey: SettingsKeys.assetsBranch).nonEmpty ?? SettingsKeys.defaultAssetsBranch }
     var clientID: String { OAuthConfig.resolveClientID(override: defaults.string(forKey: SettingsKeys.clientID)) }
+    var shareBaseURL: URL? { ShareConfig.resolveBaseURL(override: defaults.string(forKey: SettingsKeys.shareBaseURL)) }
+
+    /// 選択中のキャプチャから作った、まだ期限の来ていないリンク（新しい順）
+    var activeShares: [CloudShare] {
+        // 履歴ファイルが書き換えられていても、共有サーバー以外の URL は出さない（「ブラウザで開く」で任意の URL を開かせない）
+        (selectedCapture?.shares ?? [])
+            .filter { !$0.isExpired() && ShareClient.isValidID($0.id) && ShareConfig.server(of: $0.url) != nil && $0.url.lastPathComponent == $0.id }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
 
     // MARK: - 起動
 
@@ -223,8 +241,6 @@ final class AppModel {
     }
 
     func signOut() {
-        shareURL = nil
-        shareStatus = nil
         deviceFlowTask?.cancel()
         KeychainStore.gitHubToken.delete()
         client = nil
@@ -414,29 +430,77 @@ final class AppModel {
         } catch { errorMessage = String(localized: "画像の保存に失敗しました: \(error.localizedDescription)") }
     }
 
+    /// 書き込み済みの画像を共有サーバー（Cloudflare）に上げて、リンクをコピーする。GitHub は使わない。
     func shareScreenshot() async {
-        guard !isSharing, !isSubmitting, let client, let repo = selectedRepo, let screenshot else { return }
+        guard !isSharing, let screenshot else { return }
+        guard let baseURL = shareBaseURL else {
+            errorMessage = String(localized: "共有サーバーが設定されていません。設定の「リンク共有」でサーバーの URL を入力してください。")
+            return
+        }
         let captureID = selectedCaptureID
         let sharedAnnotations = annotations
-        let branch = assetsBranch
+        let retention = shareRetention
         let rendered = AnnotationRenderer.render(annotations, onto: screenshot)
-        guard let jpeg = ImageCodec.jpegData(rendered) else { errorMessage = String(localized: "画像を変換できませんでした。"); return }
+        // サーバーの上限は 1 枚 5MB。余裕を見て 4.5MB に収める
+        guard let jpeg = ImageCodec.jpegData(rendered, fitting: 4_500_000) else { errorMessage = String(localized: "画像が大きすぎて共有できません。"); return }
         isSharing = true
         shareURL = nil
         shareStatus = String(localized: "アップロード中…")
         defer { isSharing = false }
         do {
-            try await client.ensureBranch(repo: repo.fullName, branch: branch, defaultBranch: repo.defaultBranch)
-            let uploaded = try await client.uploadScreenshot(repo: repo.fullName, branch: branch, path: Self.screenshotPath(), jpegData: jpeg)
-            guard selectedCaptureID == captureID, self.screenshot === screenshot, annotations == sharedAnnotations, selectedRepo == repo, assetsBranch == branch, self.client?.token == client.token else { shareStatus = nil; return }
-            shareURL = uploaded.htmlUrl
-            shareStatus = String(localized: "リンクをコピーしました")
+            let client = ShareClient.make(baseURL: baseURL, masterKey: try ShareDeviceKey.loadOrCreate())
+            let share = try await client.upload(jpeg, retention: retention)
+            // 画面を移っていても、あとで消せるよう履歴には必ず残す
+            recordShare(share, for: captureID)
+            guard selectedCaptureID == captureID, self.screenshot === screenshot, annotations == sharedAnnotations else { shareStatus = nil; return }
+            shareURL = share.url
+            shareStatus = retention == .forever
+                ? String(localized: "リンクをコピーしました（無期限）")
+                : String(localized: "リンクをコピーしました（30日後に自動で削除）")
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(uploaded.htmlUrl.absoluteString, forType: .string)
+            NSPasteboard.general.setString(share.url.absoluteString, forType: .string)
         } catch {
             shareStatus = nil
             errorMessage = String(localized: "共有に失敗しました: \(error.localizedDescription)")
         }
+    }
+
+    /// 共有リンクを消す。サーバーで消せたら履歴からも外す。
+    func deleteShare(_ share: CloudShare) async {
+        guard !deletingShareIDs.contains(share.id) else { return }
+        deletingShareIDs.insert(share.id)
+        defer { deletingShareIDs.remove(share.id) }
+        do {
+            // いまの設定ではなく、リンクを作ったサーバーに送る
+            guard let client = ShareClient.forShare(share, masterKey: try ShareDeviceKey.loadOrCreate()) else {
+                throw URLError(.badURL)
+            }
+            try await client.delete(id: share.id)
+            forgetShare(share)
+            if shareURL == share.url {
+                shareURL = nil
+                shareStatus = String(localized: "リンクを削除しました")
+            }
+        } catch {
+            errorMessage = String(localized: "リンクを削除できませんでした: \(error.localizedDescription)")
+        }
+    }
+
+    private func recordShare(_ share: CloudShare, for captureID: UUID?) {
+        guard let captureID, let index = captures.firstIndex(where: { $0.id == captureID }) else { return }
+        var updated = captures[index]
+        // 期限切れのものはついでに片付ける
+        updated.shares = ((updated.shares ?? []).filter { !$0.isExpired() }) + [share]
+        do { try library.update(updated); captures[index] = updated }
+        catch { libraryStatus = String(localized: "リンクは作成しましたが、履歴への記録に失敗しました。") }
+    }
+
+    private func forgetShare(_ share: CloudShare) {
+        guard let index = captures.firstIndex(where: { $0.shares?.contains(share) == true }) else { return }
+        var updated = captures[index]
+        updated.shares = updated.shares?.filter { $0.id != share.id }
+        do { try library.update(updated); captures[index] = updated }
+        catch { libraryStatus = String(localized: "リンクは削除しましたが、履歴の更新に失敗しました。") }
     }
 
     func showWindow() {

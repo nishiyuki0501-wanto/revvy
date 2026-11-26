@@ -95,6 +95,13 @@ struct Annotation: Identifiable, Hashable, Sendable, Codable {
         self.fontSize = fontSize
     }
 
+    /// ルーラーは元画像の 1px から残す（割合で判定すると大きい画像では数 px 未満を測れない）。
+    func isMeaningful(imageSize: CGSize) -> Bool {
+        guard tool == .ruler else { return isMeaningful }
+        // 端はピクセルの境目に揃えてあるので、浮動小数の誤差を見込んで 0.5 で切る
+        return AnnotationGeometry.rulerLength(self, imageSize: imageSize) >= 0.5
+    }
+
     var isMeaningful: Bool {
         guard let first = points.first, let last = points.last else { return false }
         if tool == .pen { return points.count > 1 }
@@ -279,6 +286,23 @@ enum AnnotationRenderer {
 
 
 extension AnnotationGeometry {
+    /// 元画像のピクセル数で測ったルーラーの長さ
+    static func rulerLength(_ annotation: Annotation, imageSize: CGSize) -> CGFloat {
+        guard let first = annotation.points.first, let last = annotation.points.last else { return 0 }
+        return hypot((last.x - first.x) * imageSize.width, (last.y - first.y) * imageSize.height)
+    }
+
+    /// ルーラーの端を元画像のピクセルの境目に揃える。1px を 1 px と読めるようにするため。
+    static func snappedToPixels(_ annotation: Annotation, imageSize: CGSize) -> Annotation {
+        guard annotation.tool == .ruler, imageSize.width > 0, imageSize.height > 0 else { return annotation }
+        var snapped = annotation
+        snapped.points = annotation.points.map {
+            CGPoint(x: ($0.x * imageSize.width).rounded() / imageSize.width,
+                    y: ($0.y * imageSize.height).rounded() / imageSize.height)
+        }
+        return snapped
+    }
+
     struct RulerLabel {
         let text: String
         let center: CGPoint
