@@ -5,6 +5,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.clientID) private var clientID = ""
     @AppStorage(SettingsKeys.issueLabel) private var issueLabel = SettingsKeys.defaultLabel
     @AppStorage(SettingsKeys.assetsBranch) private var assetsBranch = SettingsKeys.defaultAssetsBranch
+    @AppStorage(SettingsKeys.shareBaseURL) private var shareBaseURL = ""
     @AppStorage(SettingsKeys.rulerUnit) private var rulerUnit = RulerUnit.pixels.rawValue
     @AppStorage(SettingsKeys.rootFontSize) private var rootFontSize = SettingsKeys.defaultRootFontSize
 
@@ -23,6 +24,22 @@ struct SettingsView: View {
                     .font(.caption)
             } header: {
                 Text("GitHub 連携（ブラウザ承認）")
+            }
+
+            Section {
+                TextField("サーバーの URL（上書き）", text: $shareBaseURL,
+                          prompt: Text(ShareConfig.bundledBaseURL.isEmpty ? "未設定" : "同梱: \(ShareConfig.bundledBaseURL)"))
+                    .font(.body.monospaced())
+                if !shareBaseURL.trimmingCharacters(in: .whitespaces).isEmpty && ShareConfig.validated(shareBaseURL) == nil {
+                    Label("https:// で始まる URL を入力してください。", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                Text("通常は空のままで構いません（公式の共有サーバーを使います）。自分で立てた共有サーバーを使う場合は、その URL を入力してください。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("リンク共有")
             }
 
             Section {

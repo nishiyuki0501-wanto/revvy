@@ -52,10 +52,6 @@ struct ContentView: View {
             model.shareURL = nil
             if !model.isSharing { model.shareStatus = nil }
         }
-        .onChange(of: model.selectedRepo) { _, _ in
-            model.shareURL = nil
-            if !model.isSharing { model.shareStatus = nil }
-        }
         .onChange(of: model.user) { _, user in if user != nil { showConnect = false } }
         .sheet(isPresented: $showConnect) {
             VStack(spacing: 0) {
@@ -130,12 +126,10 @@ struct ContentView: View {
             Menu {
                 Button("画像をコピー", systemImage: "square.on.square") { model.copyImage() }
                 Button("PNG で保存…", systemImage: "arrow.down.to.line") { model.exportImage() }
-                if model.user != nil {
-                    Divider()
-                    Button("リンクを作成してコピー", systemImage: "link") { Task { await model.shareScreenshot() } }
-                        .disabled(model.selectedRepo == nil || model.isSharing || model.isSubmitting)
-                    if let url = model.shareURL { Link("共有画像を開く", destination: url) }
-                }
+                Divider()
+                Button("リンクを作成してコピー", systemImage: "link") { Task { await model.shareScreenshot() } }
+                    .disabled(model.isSharing)
+                if let url = model.shareURL { Link("共有画像を開く", destination: url) }
             } label: {
                 Label("共有", systemImage: "square.and.arrow.up")
             }

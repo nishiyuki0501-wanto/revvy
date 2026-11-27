@@ -30,6 +30,27 @@ struct AnnotationTests {
         #expect(drawable?.stroke.isEmpty == false)
     }
 
+    @Test func rulerCanMeasureOnePixelOnLargeImages() {
+        let size = CGSize(width: 3024, height: 1964)
+        // 0.002 の割合判定だと 6px 未満は消えていた
+        let onePixel = Annotation(tool: .ruler, color: .red, points: [CGPoint(x: 100 / size.width, y: 0.5), CGPoint(x: 101 / size.width, y: 0.5)])
+        #expect(onePixel.isMeaningful(imageSize: size))
+        #expect(AnnotationGeometry.rulerLabel(onePixel, imageSize: size, displaySize: size, display: RulerDisplay(unit: .pixels))?.text == "1 px")
+        let zero = Annotation(tool: .ruler, color: .red, points: [CGPoint(x: 0.5, y: 0.5), CGPoint(x: 0.5, y: 0.5)])
+        #expect(!zero.isMeaningful(imageSize: size))
+    }
+
+    @Test func rulerEndsSnapToWholePixels() {
+        let size = CGSize(width: 1000, height: 500)
+        let drawn = Annotation(tool: .ruler, color: .red, points: [CGPoint(x: 0.10032, y: 0.2), CGPoint(x: 0.10121, y: 0.2)])
+        let snapped = AnnotationGeometry.snappedToPixels(drawn, imageSize: size)
+        #expect(abs(AnnotationGeometry.rulerLength(snapped, imageSize: size) - 1) < 1e-9)
+        #expect(abs(snapped.points[0].x * size.width - 100) < 1e-9)
+        // ルーラー以外は動かさない
+        let arrow = Annotation(tool: .arrow, color: .red, points: drawn.points)
+        #expect(AnnotationGeometry.snappedToPixels(arrow, imageSize: size).points == drawn.points)
+    }
+
     @Test func degenerateAnnotationIsNotMeaningful() {
         let dot = Annotation(tool: .rectangle, color: .red, points: [CGPoint(x: 0.5, y: 0.5), CGPoint(x: 0.5, y: 0.5)])
         #expect(!dot.isMeaningful)

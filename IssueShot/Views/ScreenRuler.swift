@@ -31,6 +31,7 @@ final class ScreenRulers {
         let panel = RulerPanel(frame: frame, owner: self)
         panels.append(panel)
         panel.makeKeyAndOrderFront(nil)
+        panel.updateSizeTag()
     }
 
     func duplicate(_ panel: RulerPanel) {
@@ -172,6 +173,19 @@ enum ScreenRulerGeometry {
         return 4
     }
 
+    /// 寸法ラベルがルーラーの中に収まるか。収まらない（小さい）ときはルーラーの外に出す。
+    static func labelFitsInside(rulerSize: CGSize, labelSize: CGSize) -> Bool {
+        rulerSize.width > labelSize.width + 12 && rulerSize.height > labelSize.height + 8
+    }
+
+    /// 外に出すラベルの位置。ルーラーの下に置き、画面の下端で収まらなければ上に回す。
+    static func externalLabelOrigin(ruler: CGRect, labelSize: CGSize, visible: CGRect, gap: CGFloat = 6) -> CGPoint {
+        var y = ruler.minY - gap - labelSize.height
+        if y < visible.minY { y = ruler.maxY + gap }
+        let x = min(max(ruler.midX - labelSize.width / 2, visible.minX), visible.maxX - labelSize.width)
+        return CGPoint(x: x.rounded(), y: y.rounded())
+    }
+
     static func sizeLabel(_ size: CGSize, display: RulerDisplay) -> String {
         "\(display.label(pixels: size.width)) × \(display.label(pixels: size.height))"
     }
@@ -181,6 +195,8 @@ enum ScreenRulerGeometry {
 
 final class RulerPanel: NSPanel {
     private weak var owner: ScreenRulers?
+    /// 小さくて中に寸法が書けないときに、外に出す寸法ラベル
+    private let sizeTag = MeasureLabelPanel()
 
     init(frame: CGRect, owner: ScreenRulers) {
         self.owner = owner
@@ -195,6 +211,8 @@ final class RulerPanel: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         contentView = RulerView(frame: CGRect(origin: .zero, size: frame.size))
         identifier = MeasureOverlay.identifier
+        addChildWindow(sizeTag, ordered: .above)
+        updateSizeTag()
     }
 
     override var canBecomeKey: Bool { true }
@@ -222,6 +240,38 @@ final class RulerPanel: NSPanel {
     override func setFrame(_ frameRect: NSRect, display flag: Bool) {
         super.setFrame(frameRect, display: flag)
         rulerView?.needsDisplay = true
+        updateSizeTag()
+    }
+
+    override func setFrameOrigin(_ point: NSPoint) {
+        super.setFrameOrigin(point)
+        updateSizeTag()
+    }
+
+    override func orderOut(_ sender: Any?) {
+        sizeTag.orderOut(sender)
+        super.orderOut(sender)
+    }
+
+    override func orderFrontRegardless() {
+        super.orderFrontRegardless()
+        updateSizeTag()
+    }
+
+    /// 1px のような小さいルーラーでも寸法が読めるよう、収まらないときだけ外にラベルを出す。
+    func updateSizeTag() {
+        let text = ScreenRulerGeometry.sizeLabel(frame.size, display: .current())
+        sizeTag.setText(text)
+        let labelSize = MeasureLabelPanel.textSize(of: text)
+        guard isVisible, !ScreenRulerGeometry.labelFitsInside(rulerSize: frame.size, labelSize: labelSize) else {
+            sizeTag.orderOut(nil)
+            return
+        }
+        let visible = (screen ?? DisplayLocator.screen(containing: CGPoint(x: frame.midX, y: frame.midY))).visibleFrame
+        sizeTag.setFrameOrigin(ScreenRulerGeometry.externalLabelOrigin(ruler: frame, labelSize: sizeTag.frame.size, visible: visible))
+        // orderOut すると子ウインドウから外れるので、出すたびに付け直す（ルーラーと一緒に前後・Space を移るように）
+        if sizeTag.parent !== self { addChildWindow(sizeTag, ordered: .above) }
+        sizeTag.orderFrontRegardless()
     }
 }
 
@@ -306,11 +356,12 @@ private final class RulerView: NSView {
     private func drawSizeLabel(in bounds: CGRect) {
         let text = ScreenRulerGeometry.sizeLabel(bounds.size, display: .current()) as NSString
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
+            .font: MeasureLabelPanel.font,
             .foregroundColor: NSColor.white,
         ]
         let size = text.size(withAttributes: attributes)
-        guard bounds.width > size.width + 12, bounds.height > size.height + 8 else { return }
+        // 収まらないときは RulerPanel が外にラベルを出す
+        guard ScreenRulerGeometry.labelFitsInside(rulerSize: bounds.size, labelSize: size) else { return }
         let origin = CGPoint(x: bounds.midX - size.width / 2, y: bounds.minY + 10)
         NSColor.black.withAlphaComponent(0.72).setFill()
         NSBezierPath(roundedRect: CGRect(origin: origin, size: size).insetBy(dx: -7, dy: -3), xRadius: 5, yRadius: 5).fill()
@@ -403,7 +454,8 @@ private final class RulerView: NSView {
             return
         }
         guard let frame = window?.frame else { return }
-        let edges = ScreenRulerGeometry.edges(at: point, in: bounds)
+        // ⌘ を押しながらなら、辺をつかんでいても移動にする（小さいルーラーはどこを押しても辺になるため）
+        let edges = event.modifierFlags.contains(.command) ? [] : ScreenRulerGeometry.edges(at: point, in: bounds)
         let mouse = NSEvent.mouseLocation
         if edges.isEmpty {
             drag = .move(startFrame: frame, startMouse: mouse)

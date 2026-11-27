@@ -23,7 +23,7 @@
 
 ---
 
-Revvy is a native macOS app for showing — not just describing — what needs to change. Take a screenshot from anywhere, mark it up with boxes, arrows, text and pixel-accurate rulers, and share it as a GitHub issue or a link. Capturing, annotating, copying and saving work without any account.
+Revvy is a native macOS app for showing — not just describing — what needs to change. Take a screenshot from anywhere, mark it up with boxes, arrows, text and pixel-accurate rulers, and share it as a link or a GitHub issue. Capturing, annotating, copying, saving and link sharing work without any account.
 
 > **Status:** early development (0.x). Expect rough edges and breaking changes.
 
@@ -58,7 +58,7 @@ Revvy is a native macOS app for showing — not just describing — what needs t
 - Rectangle, arrow, pen and text tools in four colors
 - Select, move and resize shapes; grab a shape directly while drawing (hold <kbd>⌥</kbd> to draw on top instead)
 - Nudge by 1 px with the arrow keys (10 px with <kbd>⇧</kbd>), duplicate, delete, undo and redo
-- Distance ruler in px, em or both, based on original image pixels
+- Distance ruler in px, em or both, based on original image pixels. Measures from 1 px, and the ends snap to pixel boundaries
 - Coordinate rulers and center guides that are never exported
 - Zoom from 10% to 400%, pinch to zoom, hand tool for panning (100% shows one image pixel per screen point)
 
@@ -75,10 +75,15 @@ Revvy is a native macOS app for showing — not just describing — what needs t
 - On-device text recognition (Apple Vision) so you can search screenshots by the text inside them
 - Copy the recognized text, copy the annotated image, or save it as PNG
 
+**Share as Link**
+- Upload the annotated image and copy its URL in one click — no GitHub or other account needed
+- Keep it for 30 days (default) or with no expiry. Links you create stay in the history and can be deleted later
+- URLs use an unguessable 22-character random ID and are kept out of search engines
+- The viewer page shows a preview in Slack and similar apps, and has a form to report problematic images
+
 **Share to GitHub**
 - Sign in with GitHub's device flow (no client secret, token stored in the Keychain)
 - Create an issue with the annotated screenshot, labels and assignees; environment details (app version, macOS, hardware, display) are added automatically
-- Upload the annotated image and copy a link in one click
 - Obvious secrets (tokens, JWTs, `Authorization`/`Cookie` headers, email addresses) are masked in issue text
 
 ## Requirements
@@ -138,6 +143,7 @@ Use the share menu in the toolbar to **Copy Image** or **Save as PNG…**. The a
 Click the ruler button in the floating panel, choose **Add Screen Ruler** from the menu bar menu, or press <kbd>⌃⌘R</kbd>. A 320 × 200 ruler appears under the pointer.
 
 - Drag inside to move; drag an edge or corner to resize.
+- Shrinks down to 1 × 1 px. When the size does not fit inside the ruler, a label appears below it. Hold <kbd>⌘</kbd> and drag to move a small ruler.
 - Arrow keys move it by 1 px (<kbd>⇧</kbd> for 10 px); <kbd>⌥</kbd>+arrows resize it.
 - <kbd>⌘D</kbd> duplicates, <kbd>⌘;</kbd> toggles center guides, <kbd>Esc</kbd> or <kbd>⌘W</kbd> closes.
 - Hover to reveal the guide, duplicate and close buttons; right-click for the same actions.
@@ -149,12 +155,19 @@ Click the ruler button in the floating panel, choose **Add Screen Ruler** from t
 
 Sizes are in points, which match CSS pixels. The unit (px / em) follows the ruler setting.
 
+### Sharing as a link
+
+1. In the inspector, under **Share as Link**, choose how long the link lasts: **30 Days** or **No Expiry**. Revvy remembers your last choice.
+2. **Create and Copy Link** (also in the toolbar's share menu) uploads the annotated image and copies its URL to the clipboard.
+3. The links you create are listed under **Links for This Capture**. Use the … menu to copy a link, open it in the browser, or delete it.
+
+Links are hosted on Revvy's share server (Cloudflare Workers and R2), and anyone who has the URL can view them. A 30-day link stops working when it expires and is deleted automatically; a no-expiry link stays until you delete it. Only the Mac that created a link can delete it (instead of a login, a per-Mac key is stored in the Keychain). Deleting local history does not delete shared links; delete the links first.
+
 ### Sharing to GitHub
 
 1. Click **Connect to GitHub** and approve the code in your browser (device flow).
 2. Choose a repository in the inspector.
-3. **Create and Copy Link** uploads the annotated image and copies its URL.
-4. **Create Issue** creates an issue with the title (or the first line of the body), your comment, the screenshot, labels, assignees and environment details.
+3. **Create Issue** creates an issue with the title (or the first line of the body), your comment, the screenshot, labels, assignees and environment details.
 
 Images are committed to a dedicated branch (default `feedback-assets`) under `screenshots/`, not embedded in the issue body. In a public repository the images are public; in a private repository only people with access can see them. Deleting local history does not delete anything on GitHub.
 
@@ -191,14 +204,15 @@ Open **Revvy → Settings…** (<kbd>⌘,</kbd>) or **Settings…** in the menu 
 - **Rulers** — unit (px, em, or both) and the root `font-size` used for em.
 - **Issue** — label added automatically (default `app-feedback`) and the branch used for screenshots (default `feedback-assets`).
 - **GitHub** — optional OAuth App Client ID override for forks.
+- **Link Sharing** — override the share server URL (for forks or your own server).
 
 ## Privacy
 
 - Captures, annotations, notes and recognized text are stored only on your Mac (`~/Library/Application Support/Revvy/Captures`).
 - Text recognition runs on-device with Apple Vision.
 - Your GitHub token is stored in the macOS Keychain.
-- Revvy has no analytics, advertising or crash-reporting SDKs and sends nothing to its developers.
-- Data leaves your Mac only when you use a GitHub feature, and only to the repository you chose.
+- Revvy has no analytics, advertising or crash-reporting SDKs. Only images you share as a link are sent to the share server run by Revvy's developer.
+- Data leaves your Mac only when you use **Create and Copy Link** (the image goes to Revvy's share server) or a GitHub feature (to the repository you chose).
 
 Full details: [PRIVACY.md](PRIVACY.md)
 
@@ -239,8 +253,9 @@ make build
 ## Distributing a fork
 
 1. **Bundle ID** — change `PRODUCT_BUNDLE_IDENTIFIER` in `project.yml` (the internal module is still named `IssueShot` for historical reasons).
-2. **GitHub OAuth App** — create your own OAuth App at <https://github.com/settings/applications/new>, enable **Device Flow**, and put its Client ID in `IssueShot/OAuthConfig.swift`. Device flow does not use a client secret, so the Client ID can be public.
-3. **Developer ID build** — with a Developer ID Application certificate and notary credentials:
+2. **Share server** — deploy the Worker in `cloud/` to your own Cloudflare account and set its URL as `ShareConfig.bundledBaseURL` in `IssueShot/Services/ShareService.swift`. See [cloud/README.md](cloud/README.md).
+3. **GitHub OAuth App** — create your own OAuth App at <https://github.com/settings/applications/new>, enable **Device Flow**, and put its Client ID in `IssueShot/OAuthConfig.swift`. Device flow does not use a client secret, so the Client ID can be public.
+4. **Developer ID build** — with a Developer ID Application certificate and notary credentials:
 
    ```bash
    make notary-setup TEAM_ID=YOUR_TEAM_ID APPLE_ID=you@example.com
@@ -250,7 +265,7 @@ make build
 
    The DMG gets a branded install window (background art and icon layout). That needs `pip3 install --user dmgbuild pillow`; without them the script falls back to a plain disk image. Run `python3 scripts/make-dmg-background.py` to regenerate the artwork after changing the app icon.
 
-4. **Mac App Store (optional)** — an `AppStore` build configuration with App Sandbox, a privacy manifest and export scripts is included. See [docs/APP_STORE.md](docs/APP_STORE.md).
+5. **Mac App Store (optional)** — an `AppStore` build configuration with App Sandbox, a privacy manifest and export scripts is included. See [docs/APP_STORE.md](docs/APP_STORE.md).
 
 ## Localization
 
@@ -280,12 +295,14 @@ IssueShotTests/             Swift Testing suites
 Config/                     Signing and build configuration
 scripts/                    Distribution scripts
 docs/                       Additional documentation
+cloud/                      Link-sharing server (Cloudflare Workers + R2)
 ```
 
 ## Known limitations
 
 - No video or GIF recording.
-- Sharing uses a branch in your GitHub repository; there is no separate image host, so people without repository access cannot open links to private repositories.
+- Images shared as links can be viewed by anyone who has the URL. There is not yet a way to limit who can view them (passwords, team-only access).
+- Images attached to issues are still stored on a branch in your GitHub repository, as before.
 - Screen Recording permission changes may require restarting the app.
 - The GitHub OAuth App bundled with official builds is still registered under the name "IssueShot".
 

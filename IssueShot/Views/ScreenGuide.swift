@@ -105,7 +105,7 @@ final class GuidePanel: NSPanel {
     let orientation: GuideOrientation
     let screenFrame: CGRect
     private weak var owner: ScreenRulers?
-    private let labelPanel = GuideLabelPanel()
+    private let labelPanel = MeasureLabelPanel()
 
     /// 線の位置（スクリーン座標）。縦線は x、横線は y。
     var position: CGFloat {
@@ -171,9 +171,14 @@ final class GuidePanel: NSPanel {
     }
 }
 
-/// 位置の表示。クリックは下へ通す。
-private final class GuideLabelPanel: NSPanel {
+/// ガイド線の位置や、小さいルーラーの寸法を出すラベル。クリックは下へ通す。
+final class MeasureLabelPanel: NSPanel {
+    static let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
     private let field = NSTextField(labelWithString: "")
+
+    static func textSize(of text: String) -> CGSize {
+        (text as NSString).size(withAttributes: [.font: font])
+    }
 
     init() {
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -190,7 +195,7 @@ private final class GuideLabelPanel: NSPanel {
         background.wantsLayer = true
         background.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.72).cgColor
         background.layer?.cornerRadius = 5
-        field.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        field.font = Self.font
         field.textColor = .white
         field.translatesAutoresizingMaskIntoConstraints = false
         background.addSubview(field)

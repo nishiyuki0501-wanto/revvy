@@ -23,7 +23,7 @@
 
 ---
 
-Revvy 是一款原生 macOS 应用，用来“展示”而不只是“描述”需要修改的地方。在任何 App 中截屏，用矩形、箭头、文本和像素级标尺进行标注，再以 GitHub Issue 或链接的形式分享。截屏、标注、拷贝和存储无需任何账户。
+Revvy 是一款原生 macOS 应用，用来“展示”而不只是“描述”需要修改的地方。在任何 App 中截屏，用矩形、箭头、文本和像素级标尺进行标注，再以链接或 GitHub Issue 的形式分享。截屏、标注、拷贝、存储和链接分享无需任何账户。
 
 > **状态：** 早期开发阶段（0.x）。可能存在不完善之处和不兼容的变更。
 
@@ -60,7 +60,7 @@ Revvy 是一款原生 macOS 应用，用来“展示”而不只是“描述”�
 - 矩形、箭头、笔、文本工具，共 4 种颜色
 - 选择、移动和调整形状大小；绘制时也可以直接抓取附近的形状（按住 <kbd>⌥</kbd> 则叠加绘制）
 - 用方向键微调 1 px（按住 <kbd>⇧</kbd> 为 10 px），支持复制、删除、撤销和重做
-- 基于原始图像像素的距离标尺（px、em 或两者）
+- 基于原始图像像素的距离标尺（px、em 或两者）。最小可从 1 px 开始测量，端点会对齐到像素边界
 - 不会导出的坐标标尺和中心参考线
 - 10%–400% 缩放、双指缩放、抓手工具平移（100% 表示图像的 1 像素对应屏幕的 1 点）
 
@@ -77,10 +77,15 @@ Revvy 是一款原生 macOS 应用，用来“展示”而不只是“描述”�
 - 本地文字识别（Apple Vision），可按图像中的文字搜索截屏
 - 拷贝识别出的文字、拷贝标注后的图像或存储为 PNG
 
+**以链接共享**
+- 一键上传标注后的图像并拷贝 URL，无需 GitHub 或其他账户
+- 保存期限可选 30 天（默认）或永久。创建的链接会保留在历史记录中，之后可以删除
+- URL 是无法猜测的 22 位随机 ID，不会被搜索引擎收录
+- 查看页面可在 Slack 等 App 中显示预览，并附有举报问题图像的表单
+
 **分享到 GitHub**
 - 通过 GitHub 设备流登录（不需要 Client Secret，令牌保存在钥匙串中）
 - 创建附带标注截图、标签和负责人的 Issue；自动附加环境信息（App 版本、macOS、机型、显示器）
-- 一键上传标注后的图像并拷贝链接
 - Issue 文本中的令牌、JWT、`Authorization`／`Cookie` 请求头和电子邮件地址会被自动遮盖
 
 ## 系统要求
@@ -140,6 +145,7 @@ Revvy 的窗口和截屏面板不会出现在截图中。屏幕标尺和参考�
 点按截屏面板中的标尺按钮、在菜单栏菜单中选择**添加屏幕标尺**，或按 <kbd>⌃⌘R</kbd>，指针处会出现一个 320 × 200 的标尺。
 
 - 在内部拖移以移动；拖移边缘或角落以调整大小
+- 可缩小到 1 px × 1 px。尺寸无法放进标尺时，会在标尺下方显示标签。按住 <kbd>⌘</kbd> 拖移可移动较小的标尺
 - 方向键移动 1 px（<kbd>⇧</kbd> 为 10 px）；<kbd>⌥</kbd>＋方向键调整大小
 - <kbd>⌘D</kbd> 复制，<kbd>⌘;</kbd> 切换中心参考线，<kbd>Esc</kbd> 或 <kbd>⌘W</kbd> 关闭
 - 鼠标悬停时显示参考线、复制和关闭按钮；右键点按也可执行相同操作
@@ -151,12 +157,19 @@ Revvy 的窗口和截屏面板不会出现在截图中。屏幕标尺和参考�
 
 尺寸以点为单位，与 CSS 像素一致。单位（px／em）遵循标尺设置。
 
+### 以链接共享
+
+1. 在检查器的**以链接共享**中选择保存期限（**30 天**或**永久**），Revvy 会记住你上次的选择。
+2. 点按**创建并拷贝链接**（工具栏的分享菜单中也有），会上传标注后的图像，并将 URL 拷贝到剪贴板。
+3. 创建的链接会列在**此截图的链接**中。通过 … 菜单可以拷贝链接、在浏览器中打开或删除。
+
+链接保存在 Revvy 的共享服务器（Cloudflare Workers 和 R2）上，任何知道 URL 的人都可以查看。30 天的链接到期后将无法查看，并会被自动删除；永久链接在你删除之前会一直保留。只有创建该链接的 Mac 才能删除它（代替登录，每台 Mac 的密钥保存在钥匙串中）。删除本地历史记录不会删除已分享的链接，请先删除链接。
+
 ### 分享到 GitHub
 
 1. 点按**连接 GitHub**，在浏览器中批准代码（设备流）。
 2. 在检查器中选择仓库。
-3. **创建并拷贝链接**会上传标注后的图像并拷贝其 URL。
-4. **创建 Issue** 会创建包含标题（留空时使用正文第一行）、评论、截图、标签、负责人和环境信息的 Issue。
+3. **创建 Issue** 会创建包含标题（留空时使用正文第一行）、评论、截图、标签、负责人和环境信息的 Issue。
 
 图像不会嵌入 Issue 正文，而是提交到专用分支（默认 `feedback-assets`）的 `screenshots/` 下。在公开仓库中图像是公开的；在私有仓库中只有有权限的人才能查看。删除本地历史记录不会删除 GitHub 上的任何内容。
 
@@ -193,14 +206,15 @@ Revvy 的窗口和截屏面板不会出现在截图中。屏幕标尺和参考�
 - **标尺** — 显示单位（px、em 或两者）以及计算 em 所用的根 `font-size`
 - **Issue** — 自动添加的标签（默认 `app-feedback`）和存放截图的分支（默认 `feedback-assets`）
 - **GitHub 连接** — 供派生版本覆盖 OAuth App 的 Client ID
+- **链接共享** — 覆盖共享服务器的 URL（供派生版本或自行搭建的服务器使用）
 
 ## 隐私
 
 - 截图、标注、备注和识别出的文字只保存在你的 Mac 上（`~/Library/Application Support/Revvy/Captures`）
 - 文字识别使用 Apple Vision 在本地进行
 - GitHub 令牌保存在 macOS 钥匙串中
-- 不包含分析、广告或崩溃报告 SDK，不会向开发者发送任何数据
-- 只有在使用 GitHub 功能时，数据才会离开你的 Mac，并且只发送到你选择的仓库
+- 不包含分析、广告或崩溃报告 SDK。只有你以链接共享的图像会发送到由开发者运营的共享服务器
+- 只有在使用**创建并拷贝链接**（图像发送到 Revvy 的共享服务器）或 GitHub 功能（发送到你选择的仓库）时，数据才会离开你的 Mac
 
 详情请参阅 [PRIVACY.zh-Hans.md](PRIVACY.zh-Hans.md)。
 
@@ -241,8 +255,9 @@ make build
 ## 分发派生版本
 
 1. **Bundle ID** — 修改 `project.yml` 中的 `PRODUCT_BUNDLE_IDENTIFIER`（由于历史原因，内部模块名仍为 `IssueShot`）。
-2. **GitHub OAuth App** — 在 <https://github.com/settings/applications/new> 创建你自己的 OAuth App，启用 **Device Flow**，并将 Client ID 写入 `IssueShot/OAuthConfig.swift`。设备流不使用 Client Secret，因此 Client ID 可以公开。
-3. **Developer ID 构建** — 准备 Developer ID Application 证书和公证凭据后：
+2. **共享服务器** — 将 `cloud/` 中的 Worker 部署到你自己的 Cloudflare 账户，并把它的 URL 设置为 `IssueShot/Services/ShareService.swift` 中的 `ShareConfig.bundledBaseURL`。步骤请参阅 [cloud/README.md](cloud/README.md)。
+3. **GitHub OAuth App** — 在 <https://github.com/settings/applications/new> 创建你自己的 OAuth App，启用 **Device Flow**，并将 Client ID 写入 `IssueShot/OAuthConfig.swift`。设备流不使用 Client Secret，因此 Client ID 可以公开。
+4. **Developer ID 构建** — 准备 Developer ID Application 证书和公证凭据后：
 
    ```bash
    make notary-setup TEAM_ID=YOUR_TEAM_ID APPLE_ID=you@example.com
@@ -252,7 +267,7 @@ make build
 
    DMG 带有定制的安装窗口（背景图和图标布局），需要 `pip3 install --user dmgbuild pillow`；若未安装则会生成普通磁盘映像。更换 App 图标后，请运行 `python3 scripts/make-dmg-background.py` 重新生成背景。
 
-4. **Mac App Store（可选）** — 仓库包含启用 App Sandbox 的 `AppStore` 构建配置、隐私清单和导出脚本。请参阅 [docs/APP_STORE.md](docs/APP_STORE.md)。
+5. **Mac App Store（可选）** — 仓库包含启用 App Sandbox 的 `AppStore` 构建配置、隐私清单和导出脚本。请参阅 [docs/APP_STORE.md](docs/APP_STORE.md)。
 
 ## 本地化
 
@@ -282,12 +297,14 @@ IssueShotTests/             Swift Testing 测试
 Config/                     签名与构建配置
 scripts/                    分发脚本
 docs/                       其他文档
+cloud/                      链接分享服务器（Cloudflare Workers + R2）
 ```
 
 ## 已知限制
 
 - 不支持录制视频或 GIF
-- 分享使用 GitHub 仓库中的分支，没有独立的图像托管服务，因此没有仓库访问权限的人无法打开私有仓库的链接
+- 以链接分享的图像，任何知道 URL 的人都可以查看。目前还不支持限定查看者（密码、仅限团队）
+- 附加到 Issue 的图像仍与之前一样保存在 GitHub 仓库的分支中
 - 更改屏幕录制权限后可能需要重新启动 App
 - 官方版本内置的 GitHub OAuth App 的注册名称仍为“IssueShot”
 

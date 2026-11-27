@@ -1,12 +1,14 @@
 import Foundation
 import Security
 
-/// GitHub トークンを Keychain に保存する（UserDefaults に平文で置かない）
+/// GitHub トークンと共有用の端末キーを Keychain に保存する（UserDefaults に平文で置かない）
 struct KeychainStore: Sendable {
     let service: String
     let account: String
 
     static let gitHubToken = KeychainStore(service: "com.wanto.IssueShot", account: "github-token")
+    /// 共有リンク用の端末キー（ShareDeviceKey）
+    static let shareDeviceKey = KeychainStore(service: "com.wanto.IssueShot", account: "share-device-key")
 
     private var baseQuery: [String: Any] {
         [

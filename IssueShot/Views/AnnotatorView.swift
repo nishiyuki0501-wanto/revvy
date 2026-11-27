@@ -335,9 +335,10 @@ struct AnnotatorView: View {
                     if let endpoint {
                         var resized = original
                         resized.points[endpoint] = point
-                        draft = resized
+                        draft = AnnotationGeometry.snappedToPixels(resized, imageSize: imageSize)
                     } else {
-                        draft = AnnotationGeometry.moved(original, by: CGSize(width: value.translation.width / size.width, height: value.translation.height / size.height))
+                        let moved = AnnotationGeometry.moved(original, by: CGSize(width: value.translation.width / size.width, height: value.translation.height / size.height))
+                        draft = AnnotationGeometry.snappedToPixels(moved, imageSize: imageSize)
                     }
                 } else if var current = draft {
                     if tool == .pen { current.points.append(point) }
@@ -350,7 +351,7 @@ struct AnnotatorView: View {
                         }
                         current.points = [first, end]
                     }
-                    draft = current
+                    draft = AnnotationGeometry.snappedToPixels(current, imageSize: imageSize)
                 }
             }
             .onEnded { value in
@@ -371,7 +372,7 @@ struct AnnotatorView: View {
                     return
                 }
                 if let original, isClick { lastClick = (original.id, Date()) }
-                if let draft, draft.isMeaningful {
+                if let draft, draft.isMeaningful(imageSize: imageSize) {
                     onCommit(original == nil ? annotations + [draft] : annotations.map { $0.id == draft.id ? draft : $0 })
                     selectedID = draft.id
                 }
