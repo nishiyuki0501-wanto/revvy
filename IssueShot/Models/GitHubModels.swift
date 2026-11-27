@@ -67,8 +67,8 @@ struct UploadedScreenshot: Hashable, Sendable {
 
     /// Issue 本文でインライン表示するための URL（private リポジトリでも閲覧権限があれば描画される）
     var rawUrl: URL {
-        var components = URLComponents(url: htmlUrl, resolvingAgainstBaseURL: false)!
+        guard var components = URLComponents(url: htmlUrl, resolvingAgainstBaseURL: false) else { return htmlUrl }
         components.queryItems = [URLQueryItem(name: "raw", value: "true")]
-        return components.url!
+        return components.url ?? htmlUrl
     }
 }

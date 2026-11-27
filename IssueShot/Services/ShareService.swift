@@ -4,6 +4,8 @@ import Security
 
 /// 共有リンクの保存期間。既定は 30 日。サーバー側（cloud/）の retention と同じ値を使う。
 enum ShareRetention: String, CaseIterable, Identifiable, Codable, Sendable {
+    case oneDay = "1d"
+    case sevenDays = "7d"
     case thirtyDays = "30d"
     case forever
 
@@ -11,8 +13,30 @@ enum ShareRetention: String, CaseIterable, Identifiable, Codable, Sendable {
 
     var title: String {
         switch self {
+        case .oneDay: String(localized: "1日")
+        case .sevenDays: String(localized: "7日")
         case .thirtyDays: String(localized: "30日")
         case .forever: String(localized: "無期限")
+        }
+    }
+
+    /// いつ消えるかの説明
+    var expiryNotice: String {
+        switch self {
+        case .oneDay: String(localized: "1日後に自動で削除されます。")
+        case .sevenDays: String(localized: "7日後に自動で削除されます。")
+        case .thirtyDays: String(localized: "30日後に自動で削除されます。")
+        case .forever: String(localized: "削除するまで残ります。")
+        }
+    }
+
+    /// リンクをコピーしたあとの知らせ
+    var copiedStatus: String {
+        switch self {
+        case .oneDay: String(localized: "リンクをコピーしました（1日後に自動で削除）")
+        case .sevenDays: String(localized: "リンクをコピーしました（7日後に自動で削除）")
+        case .thirtyDays: String(localized: "リンクをコピーしました（30日後に自動で削除）")
+        case .forever: String(localized: "リンクをコピーしました（無期限）")
         }
     }
 }
@@ -24,6 +48,10 @@ struct CloudShare: Codable, Equatable, Identifiable, Sendable {
     let createdAt: Date
     /// nil は無期限
     let expiresAt: Date?
+    /// ブラウザで書き込みを保存できるリンク（…/<id>#edit=<合言葉>）。0.3.0 で作ったリンクには無い
+    var editURL: URL? = nil
+    /// パスワード付きで作ったか
+    var isProtected: Bool? = nil
 
     func isExpired(now: Date = Date()) -> Bool {
         guard let expiresAt else { return false }
@@ -80,7 +108,10 @@ enum ShareDeviceKey {
     }
 
     static func loadOrCreate(store: KeychainStore = .shareDeviceKey) throws -> String {
-        if let existing = store.read(), isValid(existing) { return existing }
+        if let existing = try store.readIfPresent() {
+            guard isValid(existing) else { throw KeychainError(status: errSecDecode) }
+            return existing
+        }
         let key = try generate()
         try store.write(key)
         return key
@@ -113,6 +144,8 @@ struct ShareError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch status {
+        case _ where code == "password_unsupported": String(localized: "この共有サーバーはパスワードに対応していないため、リンクを作りませんでした。")
+        case 400 where code == "invalid_password": String(localized: "パスワードは 8〜128 文字で入力してください。")
         case 401: String(localized: "共有サーバーがこの Mac の鍵を受け付けませんでした。")
         case 403: String(localized: "この Mac で作ったリンクではないため、削除できません。")
         case 413: String(localized: "画像が大きすぎて共有できません。")
@@ -132,9 +165,9 @@ struct ShareClient: Sendable {
     let deviceKey: String
     var session: URLSession = .shared
 
-    /// 共有リンクの ID の形（サーバーの ID_PATTERN と同じ）
+    /// 共有リンクの ID の形（サーバーの ID_PATTERN と同じ）。43 文字が今の形で、22 文字は 0.3.0 で作ったリンク
     static func isValidID(_ id: String) -> Bool {
-        id.count == 22 && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }
+        (id.count == 43 || id.count == 22) && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }
     }
 
     /// 親鍵から、このサーバー用の鍵を作って使う。
@@ -146,19 +179,64 @@ struct ShareClient: Sendable {
         let id: String
         let url: URL
         let expiresAt: String?
+        let editURL: URL?
+        let protected: Bool?
+    }
+
+    /// サーバーと同じ決まり（8〜128 文字、制御文字なし）
+    static func isValidPassword(_ password: String) -> Bool {
+        (8...128).contains(password.unicodeScalars.count) && !password.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f }
+    }
+
+    /// 編集用リンクは、共有リンクと同じ場所を指し、# 以降に合言葉が付いたものだけを受け取る
+    static func validEditURL(_ url: URL?, for shareURL: URL) -> URL? {
+        guard let url, let fragment = url.fragment, fragment.hasPrefix("edit="), ShareDeviceKey.isValid(String(fragment.dropFirst(5))),
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        components.fragment = nil
+        return components.url == shareURL ? url : nil
     }
 
     private struct ErrorResponse: Decodable {
         let error: String?
     }
 
-    func upload(_ data: Data, contentType: String = "image/jpeg", retention: ShareRetention, now: Date = Date()) async throws -> CloudShare {
+    /// 人に伝えやすく、推測されにくいパスワード（紛らわしい文字を除いた 16 文字、約 80 ビット）
+    static func generatePassword() -> String {
+        let alphabet = Array("abcdefghijkmnpqrstuvwxyz23456789")
+        var generator = SystemRandomNumberGenerator()
+        let letters = (0..<16).map { _ in alphabet[Int.random(in: 0..<alphabet.count, using: &generator)] }
+        return stride(from: 0, to: 16, by: 4).map { String(letters[$0..<$0 + 4]) }.joined(separator: "-")
+    }
+
+    private struct Capabilities: Decodable {
+        let password: Bool?
+    }
+
+    /// 画像を送る前に、このサーバーでパスワード付きのリンクを作れるかを確かめる（作れないサーバーに、画像を置いてしまわないように）
+    func supportsPasswords() async -> Bool {
+        var request = URLRequest(url: baseURL.appending(path: "api/v1/capabilities"))
+        request.timeoutInterval = 20
+        guard let (body, response) = try? await session.data(for: request, delegate: RefuseRedirects()),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return false }
+        return (try? JSONDecoder().decode(Capabilities.self, from: body))?.password == true
+    }
+
+    func upload(_ data: Data, contentType: String = "image/jpeg", retention: ShareRetention, password: String? = nil, now: Date = Date()) async throws -> CloudShare {
+        if let password, !password.isEmpty, !(await supportsPasswords()) {
+            throw ShareError(status: 0, code: "password_unsupported")
+        }
         var components = URLComponents(url: baseURL.appending(path: "api/v1/shots"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "retention", value: retention.rawValue)]
+        // id=long で 43 文字（256 ビット）の ID を頼む。対応していない古いサーバーは 22 文字を返す
+        components.queryItems = [URLQueryItem(name: "retention", value: retention.rawValue), URLQueryItem(name: "id", value: "long")]
         var request = URLRequest(url: components.url!)
         request.httpMethod = "POST"
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(deviceKey)", forHTTPHeaderField: "Authorization")
+        // パスワードは UTF-8 を base64url にして送る（ヘッダーに日本語をそのまま入れられないため）。サーバーはハッシュだけを持つ。
+        // ヘッダー名は、サーバーの運営者のログ（wrangler tail）で値が伏せ字になる名前にしている
+        if let password, !password.isEmpty {
+            request.setValue(Data(password.utf8).base64URLEncodedString(), forHTTPHeaderField: "X-Share-Secret")
+        }
         request.timeoutInterval = 60
         let (body, response) = try await session.upload(for: request, from: data, delegate: RefuseRedirects())
         try check(response, body: body, expected: 201)
@@ -168,7 +246,13 @@ struct ShareClient: Sendable {
               ShareConfig.server(of: decoded.url)?.absoluteString == ShareConfig.validated(baseURL.absoluteString)?.absoluteString else {
             throw URLError(.badServerResponse)
         }
-        return CloudShare(id: decoded.id, url: decoded.url, createdAt: now, expiresAt: decoded.expiresAt.flatMap(Self.parseDate))
+        // パスワードを頼んだのに付かなかった（対応していないサーバー）ときは、誰でも見られるリンクを残さない
+        if let password, !password.isEmpty, decoded.protected != true {
+            try? await delete(id: decoded.id)
+            throw ShareError(status: 0, code: "password_unsupported")
+        }
+        return CloudShare(id: decoded.id, url: decoded.url, createdAt: now, expiresAt: decoded.expiresAt.flatMap(Self.parseDate),
+                          editURL: Self.validEditURL(decoded.editURL, for: decoded.url), isProtected: decoded.protected)
     }
 
     /// リンクを作ったサーバーに向けたクライアント。

@@ -1,5 +1,31 @@
 import Foundation
 
+/// GitHub OAuth の権限範囲。非公開リポジトリが不要な場合は public_repo に絞れる。
+enum GitHubOAuthScope: String, CaseIterable, Identifiable, Sendable {
+    case repo = "repo"
+    case publicRepo = "public_repo"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .repo: String(localized: "非公開リポジトリを含む（repo）")
+        case .publicRepo: String(localized: "公開リポジトリのみ（public_repo）")
+        }
+    }
+}
+
+/// ブラウザで開く URL が正規の https://github.com であることを検証する（任意スキーム起動の防止）
+enum GitHubURLValidator {
+    static func isTrustedGitHubWebURL(_ url: URL) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == "https",
+              components.user == nil, components.password == nil,
+              components.host?.lowercased() == "github.com" else { return false }
+        return true
+    }
+}
+
 /// GitHub OAuth Device Flow。ネイティブアプリなので client secret を持たず、
 /// ユーザーにコードを表示してブラウザで承認してもらう。
 /// https://docs.github.com/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow
@@ -33,19 +59,24 @@ struct GitHubDeviceFlow: Sendable {
     }
 
     let clientID: String
-    let scope = "repo"
+    let scope: String
     let session: URLSession
 
-    init(clientID: String, session: URLSession = .shared) {
+    init(clientID: String, scope: GitHubOAuthScope = .repo, session: URLSession = .shared) {
         self.clientID = clientID
+        self.scope = scope.rawValue
         self.session = session
     }
 
     func requestDeviceCode() async throws -> DeviceCode {
-        try await post(
+        let code: DeviceCode = try await post(
             URL(string: "https://github.com/login/device/code")!,
             form: ["client_id": clientID, "scope": scope]
         )
+        guard GitHubURLValidator.isTrustedGitHubWebURL(code.verificationUri) else {
+            throw FlowError.server(String(localized: "GitHub の承認ページ URL が不正です。"))
+        }
+        return code
     }
 
     /// 承認されるまでポーリング。Task のキャンセルで中断できる。
@@ -75,6 +106,11 @@ struct GitHubDeviceFlow: Sendable {
         throw FlowError.expired
     }
 
+    private final class RefuseRedirects: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest) async -> URLRequest? { nil }
+    }
+
     private func post<T: Decodable>(_ url: URL, form: [String: String]) async throws -> T {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -82,10 +118,12 @@ struct GitHubDeviceFlow: Sendable {
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         var components = URLComponents()
         components.queryItems = form.map { URLQueryItem(name: $0.key, value: $0.value) }
-        request.httpBody = Data(components.percentEncodedQuery!.utf8)
+        request.httpBody = Data((components.percentEncodedQuery ?? "").utf8)
 
-        let (data, response) = try await session.data(for: request)
-        let http = response as! HTTPURLResponse
+        let (data, response) = try await session.data(for: request, delegate: RefuseRedirects())
+        guard let http = response as? HTTPURLResponse else {
+            throw FlowError.server(String(localized: "不正な HTTP レスポンスです。"))
+        }
         guard (200..<300).contains(http.statusCode) else {
             throw FlowError.server("GitHub \(http.statusCode): \(String(data: data, encoding: .utf8) ?? "")")
         }

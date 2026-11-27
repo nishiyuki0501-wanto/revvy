@@ -5,11 +5,13 @@ import UniformTypeIdentifiers
 
 enum SettingsKeys {
     static let clientID = "github.oauthClientID"
+    static let oauthScope = "github.oauthScope"
     static let issueLabel = "issue.label"
     static let assetsBranch = "issue.assetsBranch"
     static let selectedRepo = "issue.selectedRepo"
 
     static let shareRetention = "share.retention"
+    static let sharePasswordEnabled = "share.passwordEnabled"
     static let shareBaseURL = "share.baseURL"
 
     static let rulerUnit = "ruler.unit"
@@ -54,6 +56,19 @@ final class AppModel {
     var shareRetention: ShareRetention = ShareRetention(rawValue: UserDefaults.standard.string(forKey: SettingsKeys.shareRetention) ?? "") ?? .thirtyDays {
         didSet { UserDefaults.standard.set(shareRetention.rawValue, forKey: SettingsKeys.shareRetention) }
     }
+    /// 共有リンクにパスワードを付けるか
+    var sharePasswordEnabled: Bool = UserDefaults.standard.bool(forKey: SettingsKeys.sharePasswordEnabled) {
+        didSet { UserDefaults.standard.set(sharePasswordEnabled, forKey: SettingsKeys.sharePasswordEnabled) }
+    }
+    /// 共有リンクに付けるパスワード。Keychain に置く（UserDefaults に平文で置かない）。
+    /// 1 文字ごとの同期 Keychain 更新を避けるためデバウンスし、アップロード時には即時フラッシュする。
+    var sharePassword: String = KeychainStore.sharePassword.read() ?? "" {
+        didSet {
+            guard sharePassword != oldValue else { return }
+            scheduleSharePasswordPersist()
+        }
+    }
+    @ObservationIgnored private var sharePasswordPersistTask: Task<Void, Never>?
     var libraryStatus: String?
     private let library = CaptureLibrary()
     private var didBootstrap = false
@@ -149,9 +164,41 @@ final class AppModel {
 
     private var defaults: UserDefaults { .standard }
     var issueLabel: String { defaults.string(forKey: SettingsKeys.issueLabel).nonEmpty ?? SettingsKeys.defaultLabel }
-    var assetsBranch: String { defaults.string(forKey: SettingsKeys.assetsBranch).nonEmpty ?? SettingsKeys.defaultAssetsBranch }
+    var assetsBranch: String {
+        guard let candidate = defaults.string(forKey: SettingsKeys.assetsBranch)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              GitHubClient.isValidBranchName(candidate) else { return SettingsKeys.defaultAssetsBranch }
+        return candidate
+    }
     var clientID: String { OAuthConfig.resolveClientID(override: defaults.string(forKey: SettingsKeys.clientID)) }
+    var oauthScope: GitHubOAuthScope {
+        GitHubOAuthScope(rawValue: defaults.string(forKey: SettingsKeys.oauthScope) ?? "") ?? .repo
+    }
     var shareBaseURL: URL? { ShareConfig.resolveBaseURL(override: defaults.string(forKey: SettingsKeys.shareBaseURL)) }
+
+    private func scheduleSharePasswordPersist() {
+        sharePasswordPersistTask?.cancel()
+        let value = sharePassword
+        sharePasswordPersistTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            self?.persistSharePassword(value)
+        }
+    }
+
+    func flushSharePassword() {
+        sharePasswordPersistTask?.cancel()
+        sharePasswordPersistTask = nil
+        persistSharePassword(sharePassword)
+    }
+
+    private func persistSharePassword(_ value: String) {
+        if value.isEmpty {
+            KeychainStore.sharePassword.delete()
+        } else {
+            do { try KeychainStore.sharePassword.write(value) }
+            catch { libraryStatus = error.localizedDescription }
+        }
+    }
 
     /// 選択中のキャプチャから作った、まだ期限の来ていないリンク（新しい順）
     var activeShares: [CloudShare] {
@@ -205,13 +252,16 @@ final class AppModel {
         }
         authError = nil
         deviceFlowTask?.cancel()
+        let scope = oauthScope
         deviceFlowTask = Task {
-            let flow = GitHubDeviceFlow(clientID: id)
+            let flow = GitHubDeviceFlow(clientID: id, scope: scope)
             do {
                 let code = try await flow.requestDeviceCode()
+                guard GitHubURLValidator.isTrustedGitHubWebURL(code.verificationUri) else {
+                    throw GitHubDeviceFlow.FlowError.server(String(localized: "GitHub の承認ページ URL が不正です。"))
+                }
                 auth = .awaitingDeviceApproval(userCode: code.userCode, verificationUri: code.verificationUri)
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(code.userCode, forType: .string)
+                SecretPasteboard.copy(code.userCode)
                 NSWorkspace.shared.open(code.verificationUri)
                 let token = try await flow.waitForToken(code)
                 await signIn(token: token)
@@ -440,6 +490,12 @@ final class AppModel {
         let captureID = selectedCaptureID
         let sharedAnnotations = annotations
         let retention = shareRetention
+        if sharePasswordEnabled { flushSharePassword() }
+        let password = sharePasswordEnabled ? sharePassword : ""
+        if sharePasswordEnabled, !ShareClient.isValidPassword(password) {
+            errorMessage = String(localized: "パスワードは 8〜128 文字で入力してください。")
+            return
+        }
         let rendered = AnnotationRenderer.render(annotations, onto: screenshot)
         // サーバーの上限は 1 枚 5MB。余裕を見て 4.5MB に収める
         guard let jpeg = ImageCodec.jpegData(rendered, fitting: 4_500_000) else { errorMessage = String(localized: "画像が大きすぎて共有できません。"); return }
@@ -449,14 +505,14 @@ final class AppModel {
         defer { isSharing = false }
         do {
             let client = ShareClient.make(baseURL: baseURL, masterKey: try ShareDeviceKey.loadOrCreate())
-            let share = try await client.upload(jpeg, retention: retention)
+            let share = try await client.upload(jpeg, retention: retention, password: password.isEmpty ? nil : password)
             // 画面を移っていても、あとで消せるよう履歴には必ず残す
             recordShare(share, for: captureID)
             guard selectedCaptureID == captureID, self.screenshot === screenshot, annotations == sharedAnnotations else { shareStatus = nil; return }
             shareURL = share.url
-            shareStatus = retention == .forever
-                ? String(localized: "リンクをコピーしました（無期限）")
-                : String(localized: "リンクをコピーしました（30日後に自動で削除）")
+            shareStatus = share.isProtected == true
+                ? String(localized: "パスワード付きのリンクをコピーしました。パスワードは、リンクとは別の方法で伝えてください。")
+                : retention.copiedStatus
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(share.url.absoluteString, forType: .string)
         } catch {

@@ -106,8 +106,10 @@ struct ConnectView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
-                Link("ブラウザを開く", destination: uri)
-                    .buttonStyle(.bordered)
+                if GitHubURLValidator.isTrustedGitHubWebURL(uri) {
+                    Link("ブラウザを開く", destination: uri)
+                        .buttonStyle(.bordered)
+                }
                 Button("キャンセル") { model.cancelDeviceFlow() }
             }
             ProgressView()

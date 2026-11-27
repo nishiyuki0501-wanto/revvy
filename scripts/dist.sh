@@ -14,6 +14,7 @@ NOTARIZE=1
 
 APP=Revvy
 TEAM_ID=${TEAM_ID:?Set TEAM_ID to your Apple Developer team ID}
+[[ "$TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || { echo "✗ TEAM_ID must be a 10-character Apple Developer Team ID" >&2; exit 1; }
 NOTARY_PROFILE=${NOTARY_PROFILE:-Revvy-notary}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DIST="$ROOT/dist"

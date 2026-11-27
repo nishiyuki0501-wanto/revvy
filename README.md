@@ -77,8 +77,8 @@ Revvy is a native macOS app for showing — not just describing — what needs t
 
 **Share as Link**
 - Upload the annotated image and copy its URL in one click — no GitHub or other account needed
-- Keep it for 30 days (default) or with no expiry. Links you create stay in the history and can be deleted later
-- URLs use an unguessable 22-character random ID and are kept out of search engines
+- Keep it for 1 day, 7 days, 30 days (default) or with no expiry, and add a password if you need one. Links you create stay in the history and can be deleted later
+- URLs use an unguessable 43-character random ID and are kept out of search engines
 - The viewer page shows a preview in Slack and similar apps, and has a form to report problematic images
 
 **Share to GitHub**
@@ -157,11 +157,13 @@ Sizes are in points, which match CSS pixels. The unit (px / em) follows the rule
 
 ### Sharing as a link
 
-1. In the inspector, under **Share as Link**, choose how long the link lasts: **30 Days** or **No Expiry**. Revvy remembers your last choice.
+1. In the inspector, under **Share as Link**, choose how long the link lasts: **1 Day**, **7 Days**, **30 Days** or **No Expiry**. For images that must not leak, turn on **Add a Password** (viewing then needs both the link and the password). Revvy remembers your last choice.
 2. **Create and Copy Link** (also in the toolbar's share menu) uploads the annotated image and copies its URL to the clipboard.
 3. The links you create are listed under **Links for This Capture**. Use the … menu to copy a link, open it in the browser, or delete it.
 
 Links are hosted on Revvy's share server (Cloudflare Workers and R2), and anyone who has the URL can view them. A 30-day link stops working when it expires and is deleted automatically; a no-expiry link stays until you delete it. Only the Mac that created a link can delete it (instead of a login, a per-Mac key is stored in the Keychain). Deleting local history does not delete shared links; delete the links first.
+
+On the share page you can add text, shapes, lines, arrows, rulers and pen strokes in the browser. Each save becomes a new version, and the original image and earlier versions stay available. Only people who have the edit link (**Copy Edit Link** in the link menu) can save annotations. The normal link is view-only.
 
 ### Sharing to GitHub
 
@@ -301,7 +303,7 @@ cloud/                      Link-sharing server (Cloudflare Workers + R2)
 ## Known limitations
 
 - No video or GIF recording.
-- Images shared as links can be viewed by anyone who has the URL. There is not yet a way to limit who can view them (passwords, team-only access).
+- A link without a password can be viewed by anyone who has the URL. There is not yet a way to limit viewing to specific accounts (sign-in, team-only access).
 - Images attached to issues are still stored on a branch in your GitHub repository, as before.
 - Screen Recording permission changes may require restarting the app.
 - The GitHub OAuth App bundled with official builds is still registered under the name "IssueShot".

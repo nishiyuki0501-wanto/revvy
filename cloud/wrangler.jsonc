@@ -4,6 +4,8 @@
   "name": "revvy-share",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-22",
+  // 閲覧ページの編集機能（src/editor.client.js）は、文字列として取り込んで /editor.js で返す
+  "rules": [{ "type": "Text", "globs": ["**/*.client.js"], "fallthrough": true }],
   // 共有サーバーは IP アドレスを記録しない（PRIVACY.md）。調べるときは `wrangler tail` で一時的に見る。
   "observability": { "enabled": false },
   // 1 日あたりの上限を数える（src/index.ts の UsageQuota）
@@ -23,7 +25,11 @@
     // 閲覧（当てずっぽうに ID を試す相手を止める）
     { "name": "VIEW_IP_LIMIT", "namespace_id": "7303", "simple": { "limit": 300, "period": 60 } },
     // 通報フォーム
-    { "name": "REPORT_IP_LIMIT", "namespace_id": "7304", "simple": { "limit": 5, "period": 60 } }
+    { "name": "REPORT_IP_LIMIT", "namespace_id": "7304", "simple": { "limit": 5, "period": 60 } },
+    // ブラウザからの書き込みの保存（バージョンの追加）
+    { "name": "EDIT_IP_LIMIT", "namespace_id": "7305", "simple": { "limit": 10, "period": 60 } },
+    // パスワード付きリンクのパスワード入力
+    { "name": "UNLOCK_IP_LIMIT", "namespace_id": "7306", "simple": { "limit": 10, "period": 60 } }
   ],
   "vars": {
     // 1 枚あたりの上限（バイト）。アプリは幅 2000px までの JPEG を送るので通常 1MB 未満。
@@ -36,7 +42,51 @@
     "QUOTA_GLOBAL_UPLOADS": "20000",
     "QUOTA_GLOBAL_BYTES": "10000000000",
     // 通報の書き込み（サーバー全体、1 日）
-    "QUOTA_REPORTS_PER_DAY": "2000"
+    "QUOTA_REPORTS_PER_DAY": "2000",
+    // ブラウザからの書き込みの保存（1 日）。IP ごとと、サーバー全体
+    "QUOTA_IP_EDITS": "300",
+    "QUOTA_GLOBAL_EDITS": "20000",
+    // パスワード付きリンク 1 つにつき、1 日に間違えられる回数（総当たりを止める）
+    "QUOTA_UNLOCK_FAILURES": "300",
+    // そのうち、同じ IP から間違えられる回数（URL だけ知っている人が、ほかの人を締め出せないように）
+    "QUOTA_UNLOCK_IP_FAILURES": "20"
     // QUOTA_SECRET は wrangler secret で入れる（IP を数えるときの HMAC 鍵）
+  },
+  // ステージング（npx wrangler deploy --env staging → revvy-share-staging）。本番とは別の Worker・バケット・回数制限・秘密鍵を使う。
+  // 本番に出す前に、ここで通し確認をする: npm run deploy:staging && BASE=<ステージングの URL> npm run smoke
+  // バインディングと vars は環境ごとに書く決まり（上の本番の値は引き継がれない）。本番を変えたら、ここも同じに直す。
+  "env": {
+    "staging": {
+      "durable_objects": {
+        "bindings": [{ "name": "QUOTA", "class_name": "UsageQuota" }]
+      },
+      "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UsageQuota"] }],
+      "r2_buckets": [
+        { "binding": "SHOTS", "bucket_name": "revvy-shots-staging" }
+      ],
+      "ratelimits": [
+        { "name": "UPLOAD_KEY_LIMIT", "namespace_id": "7401", "simple": { "limit": 10, "period": 60 } },
+        { "name": "UPLOAD_IP_LIMIT", "namespace_id": "7402", "simple": { "limit": 30, "period": 60 } },
+        { "name": "VIEW_IP_LIMIT", "namespace_id": "7403", "simple": { "limit": 300, "period": 60 } },
+        { "name": "REPORT_IP_LIMIT", "namespace_id": "7404", "simple": { "limit": 5, "period": 60 } },
+        { "name": "EDIT_IP_LIMIT", "namespace_id": "7405", "simple": { "limit": 10, "period": 60 } },
+        { "name": "UNLOCK_IP_LIMIT", "namespace_id": "7406", "simple": { "limit": 10, "period": 60 } }
+      ],
+      "vars": {
+        "MAX_UPLOAD_BYTES": "5000000",
+        "QUOTA_KEY_UPLOADS": "100",
+        "QUOTA_KEY_BYTES": "200000000",
+        "QUOTA_IP_UPLOADS": "300",
+        "QUOTA_IP_BYTES": "500000000",
+        // 試験用なので、全体の上限は本番より小さくしておく
+        "QUOTA_GLOBAL_UPLOADS": "2000",
+        "QUOTA_GLOBAL_BYTES": "1000000000",
+        "QUOTA_REPORTS_PER_DAY": "200",
+        "QUOTA_IP_EDITS": "300",
+        "QUOTA_GLOBAL_EDITS": "2000",
+        "QUOTA_UNLOCK_FAILURES": "300",
+        "QUOTA_UNLOCK_IP_FAILURES": "20"
+      }
+    }
   }
 }

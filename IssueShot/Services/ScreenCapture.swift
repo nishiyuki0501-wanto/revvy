@@ -356,12 +356,21 @@ private final class SelectionView: NSView {
 
 enum ImageCodec {
     static func load(_ url: URL) -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+        guard url.isFileURL, url.host == nil || url.host == "" || url.host == "localhost",
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return boundedImage(source)
     }
 
     static func load(_ data: Data) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return boundedImage(source)
+    }
+
+    private static func boundedImage(_ source: CGImageSource) -> CGImage? {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0, width <= 64_000_000 / height else { return nil }
         return CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 

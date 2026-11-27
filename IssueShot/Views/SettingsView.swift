@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(CaptureControls.self) private var controls
     @AppStorage(SettingsKeys.clientID) private var clientID = ""
+    @AppStorage(SettingsKeys.oauthScope) private var oauthScope = GitHubOAuthScope.repo.rawValue
     @AppStorage(SettingsKeys.issueLabel) private var issueLabel = SettingsKeys.defaultLabel
     @AppStorage(SettingsKeys.assetsBranch) private var assetsBranch = SettingsKeys.defaultAssetsBranch
     @AppStorage(SettingsKeys.shareBaseURL) private var shareBaseURL = ""
@@ -12,6 +13,14 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section {
+                Picker("要求する権限", selection: $oauthScope) {
+                    ForEach(GitHubOAuthScope.allCases) { scope in
+                        Text(scope.title).tag(scope.rawValue)
+                    }
+                }
+                Text("公開リポジトリにしか Issue を作らない場合は `public_repo` に絞れます（変更後は一度連携を解除して再連携してください）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 TextField("Client ID（上書き）", text: $clientID, prompt: Text(OAuthConfig.bundledClientID.isEmpty ? "未設定" : "同梱: \(OAuthConfig.bundledClientID)"))
                     .font(.body.monospaced())
                 Text("""
@@ -110,6 +119,13 @@ struct SettingsView: View {
                 TextField("自動で付けるラベル", text: $issueLabel)
                 TextField("スクリーンショット置き場ブランチ", text: $assetsBranch)
                     .font(.body.monospaced())
+                let trimmedBranch = assetsBranch.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmedBranch.isEmpty && !GitHubClient.isValidBranchName(trimmedBranch) {
+                    Label("半角英数字・`-`・`_`・`.`・`/` で正しい Git ブランチ名を入力してください（不正な場合は `\(SettingsKeys.defaultAssetsBranch)` を使用します）。",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
                 Text("画像は Issue 本文に埋め込まず、このブランチに `screenshots/` としてコミットします。")
                     .font(.caption)
                     .foregroundStyle(.secondary)

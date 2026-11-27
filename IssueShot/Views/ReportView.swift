@@ -135,10 +135,31 @@ struct LinkShareSection: View {
                 }
             }
             .pickerStyle(.segmented)
-            Label(model.shareRetention == .forever
-                  ? "リンクを知っている人なら誰でも見られます。削除するまで残ります。"
-                  : "リンクを知っている人なら誰でも見られます。30日後に自動で削除されます。",
-                  systemImage: "link")
+            Toggle("パスワードを付ける", isOn: $model.sharePasswordEnabled)
+            if model.sharePasswordEnabled {
+                SecureField("パスワード（8 文字以上）", text: $model.sharePassword)
+                    .textFieldStyle(.roundedBorder)
+                HStack {
+                    Button("ランダムに作る") { model.sharePassword = ShareClient.generatePassword() }
+                    Spacer()
+                    Button("パスワードをコピー") {
+                        SecretPasteboard.copy(model.sharePassword)
+                    }
+                    .disabled(!ShareClient.isValidPassword(model.sharePassword))
+                }
+                .buttonStyle(.link).font(.system(size: 11))
+                if !model.sharePassword.isEmpty && !ShareClient.isValidPassword(model.sharePassword) {
+                    Label("パスワードは 8〜128 文字で入力してください。", systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10.5)).foregroundStyle(.orange)
+                }
+                Text("パスワードを変えても、すでに作ったリンクのパスワードは変わりません。")
+                    .font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Label((model.sharePasswordEnabled
+                   ? String(localized: "リンクとパスワードの両方を知っている人だけが見られます。")
+                   : String(localized: "リンクを知っている人なら誰でも見られます。")) + model.shareRetention.expiryNotice,
+                  systemImage: model.sharePasswordEnabled ? "lock" : "link")
                 .font(.system(size: 10.5)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button { Task { await model.shareScreenshot() } } label: {
@@ -148,7 +169,8 @@ struct LinkShareSection: View {
                 }
                 .frame(maxWidth: .infinity)
             }
-            .disabled(model.screenshot == nil || model.isSharing)
+            .disabled(model.screenshot == nil || model.isSharing
+                      || (model.sharePasswordEnabled && !ShareClient.isValidPassword(model.sharePassword)))
             if let url = model.shareURL {
                 HStack {
                     Link("共有画像を開く ↗", destination: url)
@@ -160,6 +182,13 @@ struct LinkShareSection: View {
                     .buttonStyle(.link)
                 }
                 .font(.system(size: 11))
+                if let editURL = model.activeShares.first(where: { $0.url == url })?.editURL {
+                    // 書き込みを保存できるのは、この編集用リンクを持っている人だけ
+                    Link("ブラウザで編集 ↗", destination: editURL).font(.system(size: 11))
+                }
+                if let status = model.shareStatus {
+                    Text(status).font(.system(size: 10.5)).foregroundStyle(.secondary)
+                }
             } else if let status = model.shareStatus {
                 Text(status).font(.system(size: 10.5)).foregroundStyle(.secondary)
             }
@@ -187,7 +216,7 @@ private struct CloudShareRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: share.expiresAt == nil ? "infinity" : "clock")
+            Image(systemName: share.isProtected == true ? "lock" : share.expiresAt == nil ? "infinity" : "clock")
                 .font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 14)
             VStack(alignment: .leading, spacing: 0) {
                 Text(share.url.absoluteString).font(.system(size: 10.5, design: .monospaced))
@@ -204,6 +233,13 @@ private struct CloudShareRow: View {
                         NSPasteboard.general.setString(share.url.absoluteString, forType: .string)
                     }
                     Link(destination: share.url) { Label("ブラウザで開く", systemImage: "arrow.up.right.square") }
+                    if let editURL = share.editURL {
+                        Divider()
+                        Link(destination: editURL) { Label("ブラウザで編集", systemImage: "pencil.tip.crop.circle") }
+                        Button("編集用リンクをコピー", systemImage: "pencil.and.list.clipboard") {
+                            SecretPasteboard.copy(editURL.absoluteString)
+                        }
+                    }
                     Divider()
                     Button("リンクを削除…", systemImage: "trash", role: .destructive) { confirmDelete = true }
                 } label: {
@@ -407,10 +443,12 @@ struct ResultSheet: View {
                     model.resetReport()
                     dismiss()
                 }
-                Link(destination: item.result.issue.htmlUrl) {
-                    Label("GitHub で開く", systemImage: "arrow.up.right.square")
+                if GitHubURLValidator.isTrustedGitHubWebURL(item.result.issue.htmlUrl) {
+                    Link(destination: item.result.issue.htmlUrl) {
+                        Label("GitHub で開く", systemImage: "arrow.up.right.square")
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
-                .buttonStyle(.borderedProminent)
             }
             .padding(.top, 4)
         }

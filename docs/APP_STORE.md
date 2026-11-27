@@ -13,7 +13,7 @@ Revvy is distributed as a signed and notarized DMG. The repository also contains
 | Signing | Automatic (`Config/AppStore.xcconfig`); pass `TEAM_ID` on the command line |
 | Compilation condition | `APP_STORE` — removes the developer option that runs the `gh` CLI |
 | Privacy manifest | `IssueShot/Resources/PrivacyInfo.xcprivacy` (no tracking; declares Other User Content and Device ID for link sharing, for app functionality; `UserDefaults` reason `CA92.1`) |
-| Export compliance | `ITSAppUsesNonExemptEncryption = NO` (only system HTTPS) |
+| Export compliance | `ITSAppUsesNonExemptEncryption = NO` (uses system-provided cryptography) |
 
 In the sandboxed build, history and settings live in the app container (`~/Library/Containers/<bundle id>/`), so they are not shared with a direct-download build. Screen Recording permission and the GitHub sign-in must be granted again.
 

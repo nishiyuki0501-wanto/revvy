@@ -8,6 +8,9 @@ private final class CloudShareStub: URLProtocol, @unchecked Sendable {
     static let okKey = String(repeating: "A", count: 43)
     static let limitedKey = String(repeating: "R", count: 43)
     static let strangerKey = String(repeating: "S", count: 43)
+    /// パスワードと編集用リンクに対応していない、古い共有サーバー
+    static let legacyKey = String(repeating: "L", count: 43)
+    static let editToken = String(repeating: "e", count: 43)
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -18,6 +21,14 @@ private final class CloudShareStub: URLProtocol, @unchecked Sendable {
         var status = 500
         var payload = "{}"
         switch (request.httpMethod, url.path) {
+        case ("GET", "/api/v1/capabilities"):
+            // 古いサーバーには、この入口が無い
+            if url.host() == "legacy.example" { status = 404 } else { status = 200; payload = #"{"password":true,"minPasswordLength":8}"# }
+        case ("POST", "/api/v1/shots") where url.host() == "legacy.example":
+            // 対応していないサーバーには、パスワード付きの画像を送らない
+            #expect(request.value(forHTTPHeaderField: "X-Share-Secret") == nil)
+            status = 201
+            payload = #"{"id":"legacyAAAAAAAAAAAAAAAA","url":"https://legacy.example/legacyAAAAAAAAAAAAAAAA","expiresAt":null}"#
         case ("POST", "/api/v1/shots"):
             #expect(request.value(forHTTPHeaderField: "Content-Type") == "image/jpeg")
             #expect(Self.body(of: request) == Data([0xff, 0xd8, 0xff, 1]))
@@ -27,7 +38,14 @@ private final class CloudShareStub: URLProtocol, @unchecked Sendable {
             } else if auth == "Bearer \(Self.okKey)" {
                 status = 201
                 let expires = retention == "forever" ? "null" : #""2026-12-26T10:00:11.589Z""#
-                payload = #"{"id":"lZbAaCNBWpeLnkw4I6f3Lw","url":"https://share.example/lZbAaCNBWpeLnkw4I6f3Lw","imageURL":"https://share.example/i/lZbAaCNBWpeLnkw4I6f3Lw","retention":"\#(retention ?? "")","expiresAt":\#(expires)}"#
+                // アプリは id=long を付けて、43 文字の ID を頼む
+                let wantsLong = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.contains { $0.name == "id" && $0.value == "long" } ?? false
+                let id = wantsLong ? "lZbAaCNBWpeLnkw4I6f3LwQ7x_Tn2VbR8sYd0KjHc-E" : "lZbAaCNBWpeLnkw4I6f3Lw"
+                // パスワードは UTF-8 の base64url で届く
+                let password = request.value(forHTTPHeaderField: "X-Share-Secret")
+                #expect(request.value(forHTTPHeaderField: "X-Share-Password") == nil)
+                if let password { #expect(password == Data("ひみつ-pass".utf8).base64URLEncodedString()) }
+                payload = #"{"id":"\#(id)","url":"https://share.example/\#(id)","imageURL":"https://share.example/i/\#(id)","editURL":"https://share.example/\#(id)#edit=\#(Self.editToken)","protected":\#(password != nil),"retention":"\#(retention ?? "")","expiresAt":\#(expires)}"#
             } else {
                 status = 401
             }
@@ -70,17 +88,65 @@ struct CloudShareTests {
     private func client(key: String) -> ShareClient {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [CloudShareStub.self]
-        return ShareClient(baseURL: URL(string: "https://share.example")!, deviceKey: key, session: URLSession(configuration: config))
+        // 古いサーバーは別のホストにして、スタブが見分けられるようにする
+        let host = key == CloudShareStub.legacyKey ? "https://legacy.example" : "https://share.example"
+        return ShareClient(baseURL: URL(string: host)!, deviceKey: key, session: URLSession(configuration: config))
     }
 
     @Test func uploadReturnsLinkThatExpiresIn30Days() async throws {
         let now = Date(timeIntervalSince1970: 1_795_000_000)
         let share = try await client(key: CloudShareStub.okKey).upload(jpeg, retention: .thirtyDays, now: now)
-        #expect(share.id == "lZbAaCNBWpeLnkw4I6f3Lw")
-        #expect(share.url.absoluteString == "https://share.example/lZbAaCNBWpeLnkw4I6f3Lw")
+        #expect(share.id == "lZbAaCNBWpeLnkw4I6f3LwQ7x_Tn2VbR8sYd0KjHc-E")
+        #expect(share.url.absoluteString == "https://share.example/lZbAaCNBWpeLnkw4I6f3LwQ7x_Tn2VbR8sYd0KjHc-E")
         #expect(share.createdAt == now)
         #expect(share.expiresAt == ShareClient.parseDate("2026-12-26T10:00:11.589Z"))
         #expect(share.expiresAt != nil)
+    }
+
+    @Test func uploadKeepsTheEditLinkAndAsksForShortRetention() async throws {
+        let share = try await client(key: CloudShareStub.okKey).upload(jpeg, retention: .oneDay)
+        #expect(share.editURL?.absoluteString == "https://share.example/\(share.id)#edit=\(CloudShareStub.editToken)")
+        #expect(share.isProtected == false)
+        #expect(ShareRetention.allCases.map(\.rawValue) == ["1d", "7d", "30d", "forever"])
+    }
+
+    @Test func passwordIsSentEncodedAndMarksTheLinkProtected() async throws {
+        let share = try await client(key: CloudShareStub.okKey).upload(jpeg, retention: .sevenDays, password: "ひみつ-pass")
+        #expect(share.isProtected == true)
+    }
+
+    /// パスワードを頼んだのに付かないサーバーでは、誰でも見られるリンクを作ったままにしない
+    @Test func passwordOnAServerWithoutSupportFailsInsteadOfSharingOpenly() async throws {
+        do {
+            _ = try await client(key: CloudShareStub.legacyKey).upload(jpeg, retention: .thirtyDays, password: "ひみつ-pass")
+            Issue.record("Must not return an unprotected link")
+        } catch let error as ShareError {
+            #expect(error.code == "password_unsupported")
+        }
+        // パスワードなしなら、古いサーバーでも今までどおり使える（編集用リンクは無い）
+        let share = try await client(key: CloudShareStub.legacyKey).upload(jpeg, retention: .forever)
+        #expect(share.editURL == nil)
+        #expect(share.isProtected == nil)
+    }
+
+    @Test func editLinksAndPasswordsAreValidated() throws {
+        let shareURL = URL(string: "https://share.example/abc")!
+        let token = CloudShareStub.editToken
+        #expect(ShareClient.validEditURL(URL(string: "https://share.example/abc#edit=\(token)"), for: shareURL) != nil)
+        #expect(ShareClient.validEditURL(URL(string: "https://evil.example/abc#edit=\(token)"), for: shareURL) == nil)
+        #expect(ShareClient.validEditURL(URL(string: "https://share.example/other#edit=\(token)"), for: shareURL) == nil)
+        #expect(ShareClient.validEditURL(URL(string: "https://share.example/abc#edit=short"), for: shareURL) == nil)
+        #expect(ShareClient.validEditURL(nil, for: shareURL) == nil)
+        #expect(ShareClient.isValidPassword("12345678"))
+        #expect(ShareClient.isValidPassword("ひみつの合言葉です"))
+        #expect(!ShareClient.isValidPassword("1234567"))
+        let generated = ShareClient.generatePassword()
+        #expect(generated.count == 19 && ShareClient.isValidPassword(generated) && generated != ShareClient.generatePassword())
+        #expect(!ShareClient.isValidPassword(String(repeating: "a", count: 129)))
+        #expect(!ShareClient.isValidPassword("abc\u{0}def"))
+        // 0.3.0 が履歴に残したリンク（編集用リンクなし）も読める
+        let old = try JSONDecoder().decode(CloudShare.self, from: Data(#"{"id":"x","url":"https://share.example/x","createdAt":0}"#.utf8))
+        #expect(old.editURL == nil && old.isProtected == nil)
     }
 
     @Test func foreverUploadHasNoExpiry() async throws {
@@ -149,6 +215,15 @@ struct CloudShareTests {
         #expect(ShareDeviceKey.isValid(official))
         // 同じサーバーなら同じ鍵（末尾の / の有無にかかわらず）
         #expect(official == ShareDeviceKey.key(for: URL(string: "https://share.example/")!, master: master))
+    }
+
+    @Test func acceptsLongIDsAndTheShortOnesFrom030() {
+        #expect(ShareClient.isValidID(String(repeating: "a", count: 43)))
+        #expect(ShareClient.isValidID("lZbAaCNBWpeLnkw4I6f3Lw"))
+        for length in [0, 21, 23, 42, 44, 64] {
+            #expect(!ShareClient.isValidID(String(repeating: "a", count: length)))
+        }
+        #expect(!ShareClient.isValidID(String(repeating: "a", count: 42) + "/"))
     }
 
     @Test func refusesToDeleteMalformedIDs() async throws {
@@ -236,6 +311,7 @@ struct CloudShareTests {
         let rendered = try #require(ImageCodec.jpegData(image))
         let share = try await owner.upload(rendered, retention: .thirtyDays)
         #expect(share.url.host() == base.host())
+        #expect(share.id.count == 43)
         let (_, page) = try await URLSession.shared.data(from: share.url)
         #expect((page as? HTTPURLResponse)?.statusCode == 200)
         do {

@@ -31,7 +31,15 @@ struct CaptureLibrary {
 
     func load() throws -> [SavedCapture] {
         guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
-        return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        try ensureRestrictedDirectory()
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            .filter { ["png", "json"].contains($0.pathExtension) }
+        for file in files {
+            let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else { throw CocoaError(.fileReadUnknown) }
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        }
+        return try files
             .filter { $0.pathExtension == "json" }
             .map { try JSONDecoder().decode(SavedCapture.self, from: Data(contentsOf: $0)) }
             .filter { FileManager.default.fileExists(atPath: imageURL($0.id).path) }
@@ -39,14 +47,33 @@ struct CaptureLibrary {
     }
 
     func save(_ capture: SavedCapture, png: Data) throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try png.write(to: imageURL(capture.id), options: .atomic)
+        try ensureRestrictedDirectory()
+        let imgURL = imageURL(capture.id)
+        try writeRestricted(png, to: imgURL)
         do { try update(capture) }
-        catch { try? FileManager.default.removeItem(at: imageURL(capture.id)); throw error }
+        catch { try? FileManager.default.removeItem(at: imgURL); throw error }
     }
 
     func update(_ capture: SavedCapture) throws {
-        try JSONEncoder().encode(capture).write(to: metadataURL(capture.id), options: .atomic)
+        try ensureRestrictedDirectory()
+        try writeRestricted(JSONEncoder().encode(capture), to: metadataURL(capture.id))
+    }
+
+    /// 非サンドボックス版でも他ユーザーや不要な権限から保護するため、ディレクトリは 0700・ファイルは 0600 に制限する
+    private func ensureRestrictedDirectory() throws {
+        let fm = FileManager.default
+        let parent = directory.deletingLastPathComponent()
+        if parent.lastPathComponent == "Revvy" {
+            try fm.createDirectory(at: parent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: parent.path)
+        }
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+    }
+
+    private func writeRestricted(_ data: Data, to url: URL) throws {
+        try data.write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     func delete(_ capture: SavedCapture) throws {

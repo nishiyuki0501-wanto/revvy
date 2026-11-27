@@ -73,28 +73,36 @@ enum IssueBodyBuilder {
     ) -> String {
         let screenshotSection: String
         if let screenshot {
-            let branchNote = String(localized: "（`\(screenshot.branch)` ブランチ）")
+            let branchNote = String(localized: "（`\(inlineCode(screenshot.branch))` ブランチ）")
             screenshotSection = """
             ![screenshot](\(screenshot.rawUrl.absoluteString))
 
-            [\(screenshot.path)](\(screenshot.htmlUrl.absoluteString)) \(branchNote)
+            [\(inlineCode(screenshot.path))](\(screenshot.htmlUrl.absoluteString)) \(branchNote)
             """
         } else if let screenshotError {
-            screenshotSection = String(localized: "アップロード失敗: \(codeBlock(screenshotError))")
+            screenshotSection = """
+            \(String(localized: "アップロード失敗:"))
+
+            ```text
+            \(codeBlock(Masking.mask(screenshotError)))
+            ```
+            """
         } else {
             screenshotSection = String(localized: "なし")
         }
 
         let agentSection: String
         if let screenshot {
-            let location = String(localized: "スクリーンショットは `\(screenshot.branch)` ブランチの `\(screenshot.path)` にある。")
+            let safeBranch = shellToken(screenshot.branch)
+            let safeSpec = shellToken("origin/\(screenshot.branch):\(screenshot.path)")
+            let location = String(localized: "スクリーンショットは `\(inlineCode(screenshot.branch))` ブランチの `\(inlineCode(screenshot.path))` にある。")
             let instruction = String(localized: "修正に着手する前に画像を読むこと。")
             agentSection = """
             \(location)
 
             ```bash
-            git fetch origin \(screenshot.branch)
-            git show origin/\(screenshot.branch):\(screenshot.path) > /tmp/feedback.jpg
+            git fetch origin \(safeBranch)
+            git show \(safeSpec) > /tmp/feedback.jpg
             ```
 
             \(instruction)
@@ -106,7 +114,9 @@ enum IssueBodyBuilder {
         return """
         ## \(String(localized: "フィードバック"))
 
+        ```text
         \(codeBlock(Masking.mask(comment.trimmingCharacters(in: .whitespacesAndNewlines))))
+        ```
 
         ## \(String(localized: "スクリーンショット"))
 
@@ -132,9 +142,27 @@ enum IssueBodyBuilder {
         """
     }
 
-    /// コードブロックを閉じられないように ``` を潰す
+    /// コードブロックを閉じられないように ``` と ~~~ を潰す
     static func codeBlock(_ text: String) -> String {
         text.replacingOccurrences(of: "```", with: "` ` `")
+            .replacingOccurrences(of: "~~~", with: "~ ~ ~")
+    }
+
+    /// インラインコードやリンク文字列を壊す文字を取り除く
+    static func inlineCode(_ text: String) -> String {
+        text.replacingOccurrences(of: "`", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: "\n", with: " ")
+    }
+
+    /// 英数字・スラッシュ等の安全な ref はそのまま、メタ文字や先頭 `-` を含む場合は単一引用符で無害化する
+    static func shellToken(_ value: String) -> String {
+        let cleaned = value.replacingOccurrences(of: "\r", with: "").replacingOccurrences(of: "\n", with: "")
+        let isPlainSafe = !cleaned.isEmpty && !cleaned.hasPrefix("-")
+            && cleaned.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "./_:-".contains($0)) }
+        if isPlainSafe { return cleaned }
+        let escaped = cleaned.replacingOccurrences(of: "'", with: "'\\''")
+        return "'\(escaped)'"
     }
 
     static func tableCell(_ text: String) -> String {

@@ -6,17 +6,37 @@ struct MaskingTests {
     @Test func masksTokensJWTsAndEmails() {
         let input = """
         Authorization: Bearer abc.def.ghi
+        {"authorization": "Basic dXNlcjpwYXNz"}
+        Authorization: Digest username="example", response="sensitive-response"
+        Set-Cookie: __Host-rv_1234=secret; HttpOnly
+        X-Share-Secret: aGVsbG8td29ybGQ
+        link=https://share.example/abc#edit=lZbAaCNBWpeLnkw4I6f3LwQ7x_Tn2VbR8sYd0KjHc-E
+        url=https://admin:hunter2@internal.example.com/api
         token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123
-        jwt=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
+        refresh=ghr_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123
+        openai=sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ012345
+        aws=AKIAIOSFODNN7EXAMPLE
+        jwt=eyJhbGciOiJIUzI1NiJ9.e30.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
         mail=teacher@example.com
         """
         let masked = Masking.mask(input)
-        #expect(masked.contains("Authorization: Bearer [MASKED]"))
-        #expect(masked.contains("[MASKED_TOKEN]"))
-        #expect(masked.contains("[MASKED_JWT]"))
-        #expect(masked.contains("[MASKED_EMAIL]"))
+        #expect(masked.contains("Authorization: [MASKED]"))
+        #expect(masked.contains("\"authorization\": \"[MASKED]"))
+        #expect(masked.contains("Set-Cookie: [MASKED]"))
+        #expect(masked.contains("X-Share-Secret: [MASKED]"))
+        #expect(masked.contains("#edit=[MASKED]"))
+        #expect(masked.contains("https://admin:[MASKED]@internal.example.com/api"))
+        #expect(masked.contains("refresh=[MASKED_TOKEN]"))
+        #expect(masked.contains("openai=[MASKED_TOKEN]"))
+        #expect(masked.contains("aws=[MASKED_TOKEN]"))
+        #expect(masked.contains("jwt=[MASKED_JWT]"))
+        #expect(masked.contains("mail=[MASKED_EMAIL]"))
         #expect(!masked.contains("ghp_"))
-        #expect(!masked.contains("example.com"))
+        #expect(!masked.contains("ghr_"))
+        #expect(!masked.contains("sensitive-response"))
+        #expect(!masked.contains("hunter2"))
+        #expect(!masked.contains("AKIAIOSFODNN7EXAMPLE"))
+        #expect(!masked.contains("teacher@example.com"))
     }
 
     @Test func leavesOrdinaryTextAlone() {
@@ -71,13 +91,41 @@ struct IssueBodyBuilderTests {
 
     @Test func bodyMasksSecretsAndDefusesCodeFences() {
         let body = IssueBodyBuilder.body(
-            comment: "token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123 ```",
+            comment: "token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123 ``` ~~~",
             environment: environment,
             screenshot: nil,
-            screenshotError: "```boom```"
+            screenshotError: "```boom``` ~~~escaped~~~"
         )
         #expect(body.contains("[MASKED_TOKEN]"))
         #expect(!body.contains("```boom```"))
+        #expect(!body.contains("~~~escaped~~~"))
+        #expect(body.contains("```text"))
+    }
+
+    @Test func shellTokensAndGitValidationDefendAgainstInjection() throws {
+        #expect(IssueBodyBuilder.shellToken("feedback-assets") == "feedback-assets")
+        #expect(IssueBodyBuilder.shellToken("--upload-pack=evil") == "'--upload-pack=evil'")
+        #expect(IssueBodyBuilder.shellToken("a; rm -rf /") == "'a; rm -rf /'")
+
+        #expect(GitHubClient.isValidBranchName("feedback-assets"))
+        #expect(GitHubClient.isValidBranchName("feature/ui-feedback_1.0"))
+        #expect(!GitHubClient.isValidBranchName("-evil"))
+        #expect(!GitHubClient.isValidBranchName("../main"))
+        #expect(!GitHubClient.isValidBranchName("branch..name"))
+        #expect(!GitHubClient.isValidBranchName("branch.lock"))
+        #expect(!GitHubClient.isValidBranchName("branch;id"))
+
+        #expect(try GitHubClient.splitRepo("octocat/Hello-World.swift") == ("octocat", "Hello-World.swift"))
+        #expect(throws: GitHubAPIError.self) { _ = try GitHubClient.splitRepo("octocat/../admin") }
+        #expect(throws: GitHubAPIError.self) { _ = try GitHubClient.splitRepo("onlyone") }
+
+        #expect(GitHubClient.isValidRepoFilePath("screenshots/20261128-001000-abcdef.jpg"))
+        #expect(!GitHubClient.isValidRepoFilePath("screenshots/../README.md"))
+
+        #expect(GitHubURLValidator.isTrustedGitHubWebURL(URL(string: "https://github.com/login/device")!))
+        #expect(!GitHubURLValidator.isTrustedGitHubWebURL(URL(string: "http://github.com/login/device")!))
+        #expect(!GitHubURLValidator.isTrustedGitHubWebURL(URL(string: "file:///Applications/Calculator.app")!))
+        #expect(!GitHubURLValidator.isTrustedGitHubWebURL(URL(string: "https://evil.example/github.com")!))
     }
 
     @Test func rawUrlAppendsRawQuery() {

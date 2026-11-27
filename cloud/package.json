@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging",
+    "deploy:production": "wrangler deploy --env=\"\"",
     "test": "vitest run",
     "typecheck": "wrangler types && tsc --noEmit",
     "smoke": "node scripts/smoke.mjs"
